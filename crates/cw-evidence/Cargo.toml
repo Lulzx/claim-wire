@@ -1,0 +1,20 @@
+[package]
+name = "cw-evidence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Two-tier semantic fingerprinter, epoch manifest loader, and @cw: wire protocol capture for Claim Wire"
+
+[dependencies]
+anyhow.workspace = true
+cw-ir.workspace = true
+cw-syntax.workspace = true
+glob.workspace = true
+hex.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+walkdir.workspace = true
