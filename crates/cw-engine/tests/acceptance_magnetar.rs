@@ -19,10 +19,8 @@ struct TempFixture {
 impl TempFixture {
     fn new(name: &str) -> Self {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let root = std::env::temp_dir().join(format!(
-            "cw-acceptance-{name}-{}-{id}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("cw-acceptance-{name}-{}-{id}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -201,19 +199,28 @@ fn point_02_multi_table_transposed_and_multi_doc_fan_out() {
     );
     // Prose throughput updated from `~491k cycles/s` to `~531k cycles/s`
     assert!(
-        readme.contains("<!-- cw:guest_bench[radix-sort-u64, test].throughput -->~531k cycles/s<!-- /cw -->"),
+        readme.contains(
+            "<!-- cw:guest_bench[radix-sort-u64, test].throughput -->~531k cycles/s<!-- /cw -->"
+        ),
         "README throughput span not updated:\n{readme}"
     );
 
     let bench = fs::read_to_string(ws.join("docs/BENCHMARKS.md")).unwrap();
     // Prose spans in BENCHMARKS.md:75-76
-    assert!(bench.contains("<!-- cw:guest_bench[radix-sort-u64, test].prove_wall -->7.90 s<!-- /cw -->"));
-    assert!(bench.contains("<!-- cw:guest_bench[radix-sort-u64, test].speedup_vs_initial -->13.5×<!-- /cw -->"));
+    assert!(
+        bench
+            .contains("<!-- cw:guest_bench[radix-sort-u64, test].prove_wall -->7.90 s<!-- /cw -->")
+    );
+    assert!(bench.contains(
+        "<!-- cw:guest_bench[radix-sort-u64, test].speedup_vs_initial -->13.5×<!-- /cw -->"
+    ));
     // Transposed deep-dive table row
     assert!(bench.contains("| Prove (wall) | **8.82 s** (≈ 476 k cycles/s; 66.8 s CPU) | **7.90 s** (≈ 531 k cycles/s; 66.3 s CPU) |"));
     // Paper comparison checklist table row
     assert!(bench.contains("**~531k cycles/s** (7.90 s wall, 66.3 s CPU)"));
-    assert!(bench.contains("**~15× behind** (improved **13.5×** from the initial 39k cycles/s / 107 s baseline)"));
+    assert!(bench.contains(
+        "**~15× behind** (improved **13.5×** from the initial 39k cycles/s / 107 s baseline)"
+    ));
 }
 
 /// Acceptance Matrix Point 3 (`spec.md` §10.2 #3):
@@ -254,10 +261,20 @@ fn point_03_ordered_prefix_sum_and_subset_sum_cascade() {
     assert!(bench.contains("<!-- cw:phase_bench.total_wall -->8.42 s<!-- /cw -->"));
     // Phase breakdown table updated Virtual Spartan duration (`1.20 s`), share (`14%`), and speedup (`7.78×`),
     // and Twist & Shout share (`2.38 / 8.42 = 28%`) and Ligerito Open share (`1.66 / 8.42 = 20%`)
-    assert!(bench.contains("| **Twist & Shout (`om-memcheck`)** | **2.38 s** | 28% | 3.68 s | **1.55×** |"));
-    assert!(bench.contains("| **Ligerito Open + Ring Switching (`om-pcs`)** | **1.66 s** | 20% | 2.28 s | **1.37×** |"));
-    assert!(bench.contains("| **Execute + Witness + Routers** | **1.69 s** | 20% | 1.63 s | ~1.0× |"));
-    assert!(bench.contains("| **Virtual Spartan (`om-spartan`)** | **1.20 s** | 14% | 9.33 s | **7.78×** |"));
+    assert!(
+        bench.contains(
+            "| **Twist & Shout (`om-memcheck`)** | **2.38 s** | 28% | 3.68 s | **1.55×** |"
+        )
+    );
+    assert!(bench.contains(
+        "| **Ligerito Open + Ring Switching (`om-pcs`)** | **1.66 s** | 20% | 2.28 s | **1.37×** |"
+    ));
+    assert!(
+        bench.contains("| **Execute + Witness + Routers** | **1.69 s** | 20% | 1.63 s | ~1.0× |")
+    );
+    assert!(bench.contains(
+        "| **Virtual Spartan (`om-spartan`)** | **1.20 s** | 14% | 9.33 s | **7.78×** |"
+    ));
 }
 
 /// Acceptance Matrix Point 4 (`spec.md` §10.2 #4):
@@ -280,7 +297,10 @@ fn point_04_idempotence() {
     assert!(second.patched_items.is_empty());
 
     assert_eq!(fs::read(ws.join("README.md")).unwrap(), snapshot_readme);
-    assert_eq!(fs::read(ws.join("docs/BENCHMARKS.md")).unwrap(), snapshot_bench);
+    assert_eq!(
+        fs::read(ws.join("docs/BENCHMARKS.md")).unwrap(),
+        snapshot_bench
+    );
     assert_eq!(
         fs::read(ws.join("docs/spec/15-testing.md")).unwrap(),
         snapshot_testing
@@ -340,9 +360,21 @@ fn point_06_true_code_invalidation_and_impact() {
     // `cw impact` traces `crates/om-spartan/src/lib.rs` to `om.benchmarks`, `guest_bench`, `phase_bench`,
     // and every bound table and span across `README.md` and `docs/BENCHMARKS.md`.
     let impact = run_impact(ws, &["crates/om-spartan/src/lib.rs".to_string()]).unwrap();
-    assert!(impact.stale_producers.contains(&"om.benchmarks".to_string()));
-    assert!(impact.affected_families.contains(&"guest_bench".to_string()));
-    assert!(impact.affected_families.contains(&"phase_bench".to_string()));
+    assert!(
+        impact
+            .stale_producers
+            .contains(&"om.benchmarks".to_string())
+    );
+    assert!(
+        impact
+            .affected_families
+            .contains(&"guest_bench".to_string())
+    );
+    assert!(
+        impact
+            .affected_families
+            .contains(&"phase_bench".to_string())
+    );
     assert!(
         impact
             .affected_locations
@@ -396,10 +428,16 @@ fn point_07_deadband_hysteresis_and_sentinel_preservation() {
 
     // Verify sentinels (`exact` on rows 5 and 19 of `13-security.md`, `under 5 min (not timed)` in `BENCHMARKS.md`)
     let sec = fs::read_to_string(ws.join("docs/spec/13-security.md")).unwrap();
-    assert!(sec.contains("| 5 | Segment split (identity 6.2) | 06 6.5 | 0 (exact) | exact | exact |"));
-    assert!(sec.contains("| 19 | Twist RAM: Inc at random point (inc_extra) | 07 7.7 | 0 (exact) | exact | exact |"));
+    assert!(
+        sec.contains("| 5 | Segment split (identity 6.2) | 06 6.5 | 0 (exact) | exact | exact |")
+    );
+    assert!(sec.contains(
+        "| 19 | Twist RAM: Inc at random point (inc_extra) | 07 7.7 | 0 (exact) | exact | exact |"
+    ));
     let bench = fs::read_to_string(ws.join("docs/BENCHMARKS.md")).unwrap();
-    assert!(bench.contains("| sha256-merkle-path (depth 2) | 32,768 | under 5 min (not timed) | 40,382 B |"));
+    assert!(bench.contains(
+        "| sha256-merkle-path (depth 2) | 32,768 | under 5 min (not timed) | 40,382 B |"
+    ));
 
     // 2. Changing deterministic `proof_size` by 1 byte (`603,942 B -> 603,943 B`, `deadband: 0%`)
     //    triggers an immediate update!
@@ -548,7 +586,10 @@ fn point_10_full_provenance_trace_cw_explain() {
     let ws = fix.path();
 
     let trace = run_explain(ws, "README.md:53").unwrap();
-    assert!(trace.contains("README.md:53  \"~491k cycles/s\""), "got:\n{trace}");
+    assert!(
+        trace.contains("README.md:53  \"~491k cycles/s\""),
+        "got:\n{trace}"
+    );
     assert!(
         trace.contains("└─ guest_bench[radix-sort-u64, test].throughput = cycles / prove_wall"),
         "got:\n{trace}"
@@ -565,10 +606,7 @@ fn point_10_full_provenance_trace_cw_explain() {
         trace.contains("run     bench-20261016-m4pro  (Apple M4 Pro, 14-core, 24 GiB)"),
         "got:\n{trace}"
     );
-    assert!(
-        trace.contains("commit  9872a7e  (clean)"),
-        "got:\n{trace}"
-    );
+    assert!(trace.contains("commit  9872a7e  (clean)"), "got:\n{trace}");
     assert!(trace.contains("fresh"), "got:\n{trace}");
 }
 
@@ -602,7 +640,7 @@ fn bonus_capture_diff_merge_driver_and_journal_recovery() {
     let ev_src = fs::read_to_string(ws.join(".claimwire/evidence.yaml")).unwrap();
     let (ev_cfg, _): (EvidenceConfig, _) = from_yaml_str(&ev_src).unwrap();
 
-    let (cap_manifest, _) = execute_capture(
+    let (cap_manifest, _, _) = execute_capture(
         ws,
         "om.inventory",
         &[

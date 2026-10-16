@@ -125,7 +125,9 @@ impl FormatPattern {
     }
 
     /// Check §4.5 rule 6 (`CW1007`): Every numeric portion must be followed (by its own unit or by literal text)
-    /// by a character outside the numeric alphabet `[0-9,.+\-eE]`.
+    /// by text that cannot continue the number. The reverse parser only extends a number over a digit,
+    /// a `,`/`.` immediately followed by a digit, or an exponent `e`/`E` followed by an optionally signed
+    /// digit, so `{n}-file` and `{passed}/{total}.` are invertible while `{a}.{b}` and `{n}5` are not.
     pub fn validate_invertibility(&self) -> Result<(), Diagnostic> {
         for idx in 0..self.segments.len() {
             let PatternSegment::Placeholder(ph) = &self.segments[idx] else {
@@ -134,16 +136,12 @@ impl FormatPattern {
             // Does this placeholder's own unit terminate its numeric portion?
             let unit_terminates_number = match &ph.spec {
                 FormatSpec::Numeric { unit, .. } => {
-                    if let Some(first_ch) = unit.chars().next() {
-                        !is_numeric_alphabet_char(first_ch)
-                    } else {
-                        false
-                    }
+                    !unit.is_empty() && !literal_continues_number(unit, false)
                 }
                 FormatSpec::Named(NamedFormat::AutoIec | NamedFormat::AutoTime) => true,
-                FormatSpec::Named(
-                    NamedFormat::Pow2 | NamedFormat::NegPow2 | NamedFormat::Hex8,
-                ) => false,
+                FormatSpec::Named(NamedFormat::Pow2 | NamedFormat::NegPow2 | NamedFormat::Hex8) => {
+                    false
+                }
                 FormatSpec::BoolMapped { .. } => true,
             };
 
@@ -169,7 +167,11 @@ impl FormatPattern {
                         }
                         if !unit_terminates_number {
                             let first_ch = lit.chars().next().unwrap();
-                            if is_numeric_alphabet_char(first_ch) {
+                            let followed_by_placeholder = matches!(
+                                self.segments.get(idx + 2),
+                                Some(PatternSegment::Placeholder(_))
+                            );
+                            if literal_continues_number(lit, followed_by_placeholder) {
                                 return Err(Diagnostic::error(
                                     DiagnosticCode::CW1007,
                                     format!(
@@ -293,8 +295,24 @@ impl FormatPattern {
     }
 }
 
-fn is_numeric_alphabet_char(c: char) -> bool {
-    c.is_ascii_digit() || matches!(c, ',' | '.' | '+' | '-' | 'e' | 'E')
+/// Whether `take_numeric_prefix` could extend a number into literal text `lit`.
+/// `followed_by_placeholder` means a placeholder (which renders a digit) comes right after `lit`.
+fn literal_continues_number(lit: &str, followed_by_placeholder: bool) -> bool {
+    let b = lit.as_bytes();
+    // The byte after position `i`: from the literal, or a digit from the next placeholder.
+    let digit_at = |i: usize| match b.get(i) {
+        Some(c) => c.is_ascii_digit(),
+        None => followed_by_placeholder,
+    };
+    match b.first() {
+        Some(c) if c.is_ascii_digit() => true,
+        Some(b',' | b'.') => digit_at(1),
+        Some(b'e' | b'E') => match b.get(1) {
+            Some(b'+' | b'-') => digit_at(2),
+            _ => digit_at(1),
+        },
+        _ => false,
+    }
 }
 
 fn find_placeholder_close(s: &str, start: usize) -> Option<usize> {
@@ -476,7 +494,9 @@ pub fn validate_spec_for_type(
             (NamedFormat::Hex8, ValueType::Digest | ValueType::String) => Ok(()),
             _ => Err(Diagnostic::error(
                 DiagnosticCode::CW2005,
-                format!("Named format `{named:?}` is not valid for type `{ty}` in `{full_pattern}`"),
+                format!(
+                    "Named format `{named:?}` is not valid for type `{ty}` in `{full_pattern}`"
+                ),
             )),
         },
         FormatSpec::BoolMapped { .. } => {
@@ -485,7 +505,9 @@ pub fn validate_spec_for_type(
             } else {
                 Err(Diagnostic::error(
                     DiagnosticCode::CW2005,
-                    format!("Boolean mapped format is not valid for type `{ty}` in `{full_pattern}`"),
+                    format!(
+                        "Boolean mapped format is not valid for type `{ty}` in `{full_pattern}`"
+                    ),
                 ))
             }
         }
@@ -519,9 +541,17 @@ fn render_single(
     target: Option<&str>,
 ) -> Result<String, Diagnostic> {
     match (val, spec) {
-        (CanonicalValue::Bool(b), FormatSpec::BoolMapped { true_str, false_str }) => {
-            Ok(if *b { true_str.clone() } else { false_str.clone() })
-        }
+        (
+            CanonicalValue::Bool(b),
+            FormatSpec::BoolMapped {
+                true_str,
+                false_str,
+            },
+        ) => Ok(if *b {
+            true_str.clone()
+        } else {
+            false_str.clone()
+        }),
         (CanonicalValue::Bool(b), FormatSpec::Numeric { unit, .. }) if unit.is_empty() => {
             Ok(b.to_string())
         }
@@ -532,7 +562,12 @@ fn render_single(
         (CanonicalValue::Text(s), FormatSpec::Numeric { unit, .. }) if unit.is_empty() => {
             Ok(s.clone())
         }
-        (CanonicalValue::PassRatio { passed, total }, FormatSpec::Numeric { precision, unit, .. }) => {
+        (
+            CanonicalValue::PassRatio { passed, total },
+            FormatSpec::Numeric {
+                precision, unit, ..
+            },
+        ) => {
             if target == Some("passed") {
                 return Ok(passed.to_string());
             }
@@ -599,11 +634,7 @@ pub fn round_half_to_even_f64(val: f64) -> f64 {
     // Use a small epsilon around 0.5 to handle decimal representation in binary float (e.g. 0.125 * 100)
     let rounded = if (diff - 0.5).abs() < 1e-9 {
         let fl_int = fl as u64;
-        if fl_int % 2 == 0 {
-            fl
-        } else {
-            fl + 1.0
-        }
+        if fl_int % 2 == 0 { fl } else { fl + 1.0 }
     } else if diff > 0.5 {
         fl + 1.0
     } else {
@@ -881,7 +912,10 @@ fn parse_single_placeholder<'a>(
             if matches!(ty, ValueType::String | ValueType::Digest) {
                 if let Some(nl) = next_literal {
                     if let Some(idx) = cursor.find(nl) {
-                        return Ok((CanonicalValue::Text(cursor[..idx].to_string()), &cursor[idx..]));
+                        return Ok((
+                            CanonicalValue::Text(cursor[..idx].to_string()),
+                            &cursor[idx..],
+                        ));
                     }
                 }
                 return Ok((CanonicalValue::Text(cursor.to_string()), ""));
@@ -922,7 +956,13 @@ fn take_numeric_prefix(s: &str) -> Result<(&str, &str), Diagnostic> {
         i += 1;
     }
     let digits_start = i;
-    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b',' || bytes[i] == b'.') {
+    // A `,` or `.` is part of the number only when a digit follows it, so trailing punctuation
+    // (`83/83.`) stays literal text.
+    while i < bytes.len()
+        && (bytes[i].is_ascii_digit()
+            || ((bytes[i] == b',' || bytes[i] == b'.')
+                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)))
+    {
         i += 1;
     }
     if i == digits_start {
@@ -949,6 +989,48 @@ fn take_numeric_prefix(s: &str) -> Result<(&str, &str), Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invertibility_follows_the_reverse_parser() {
+        let count = |_: Option<&str>| Ok(ValueType::Count);
+        // Punctuation that cannot continue a number is a valid separator.
+        for (pat, text, want) in [
+            (
+                "reviewed {n}-file matrix",
+                "reviewed 52-file matrix",
+                vec![52.0],
+            ),
+            (
+                "passes {p}/{t}. Next",
+                "passes 83/83. Next",
+                vec![83.0, 83.0],
+            ),
+            ("passes {p}/{t}.", "passes 83/83.", vec![83.0, 83.0]),
+            ("{n}, then", "1,234, then", vec![1234.0]),
+            ("{n}e", "7e", vec![7.0]),
+        ] {
+            let p = FormatPattern::parse(pat).unwrap_or_else(|d| panic!("{pat}: {}", d.message));
+            let got: Vec<f64> = p
+                .reverse_parse(text, count)
+                .unwrap_or_else(|d| panic!("{pat}: {}", d.message))
+                .values()
+                .map(|v| v.as_f64().unwrap())
+                .collect();
+            assert_eq!(got, want, "{pat}");
+        }
+        // Literals that a number could absorb stay ambiguous.
+        for pat in [
+            "{a}.{b}",
+            "{a},{b}",
+            "{n}5 items",
+            "{a}e{b}",
+            "{a}.5",
+            "{a}e-3",
+        ] {
+            let err = FormatPattern::parse(pat).expect_err(pat);
+            assert_eq!(err.code, DiagnosticCode::CW1007, "{pat}");
+        }
+    }
 
     #[test]
     fn test_format_patterns_rendering_and_invertibility() {
@@ -1005,10 +1087,7 @@ mod tests {
     fn test_auto_iec_and_pow2() {
         assert_eq!(format_auto_iec(16.0 * 1024.0 * 1024.0), "16 MiB");
         assert_eq!(format_auto_iec(112.0 * 1024.0 * 1024.0), "112 MiB");
-        assert_eq!(
-            format_auto_iec(8.3 * 1024.0 * 1024.0 * 1024.0),
-            "8.3 GiB"
-        );
+        assert_eq!(format_auto_iec(8.3 * 1024.0 * 1024.0 * 1024.0), "8.3 GiB");
         assert_eq!(format_pow2(4194304.0).unwrap(), "2^22");
         assert_eq!(
             format_pow2(4194305.0).unwrap_err().code,

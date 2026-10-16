@@ -20,7 +20,9 @@ pub fn cmd_init(workspace_root: &Path, args: &[String], styler: &Styler) -> Resu
         match arg.as_str() {
             "--force" | "-f" => force = true,
             "--git" => setup_git = true,
-            other => bail!("Unknown option `{other}` for `cw init` (expected `--force` or `--git`)"),
+            other => {
+                bail!("Unknown option `{other}` for `cw init` (expected `--force` or `--git`)")
+            }
         }
     }
 
@@ -39,9 +41,12 @@ pub fn cmd_init(workspace_root: &Path, args: &[String], styler: &Styler) -> Resu
     }
 
     let total_steps = if setup_git { 3 } else { 2 };
-    styler.animate_stage(1, total_steps, "Scaffolding .claimwire/ directory & run store...", || {
-        fs::create_dir_all(&runs_dir)
-    })?;
+    styler.animate_stage(
+        1,
+        total_steps,
+        "Scaffolding .claimwire/ directory & run store...",
+        || fs::create_dir_all(&runs_dir),
+    )?;
 
     let starter_evidence = r#"schema: claimwire-evidence/v1
 
@@ -97,7 +102,10 @@ tables: {}
 
     println!(
         "{}",
-        styler.banner("Claim Wire Initialized", &workspace_root.display().to_string())
+        styler.banner(
+            "Claim Wire Initialized",
+            &workspace_root.display().to_string()
+        )
     );
     println!(
         "  {} {}  {}",
@@ -123,29 +131,42 @@ tables: {}
     );
 
     if setup_git {
-        styler.animate_stage(3, total_steps, "Configuring structural Git merge driver...", || -> Result<()> {
-            let gitattributes_path = workspace_root.join(".gitattributes");
-            let existing_ga = fs::read_to_string(&gitattributes_path).unwrap_or_default();
-            if !existing_ga.contains("merge=claimwire") {
-                let mut updated = existing_ga;
-                if !updated.is_empty() && !updated.ends_with('\n') {
-                    updated.push('\n');
+        styler.animate_stage(
+            3,
+            total_steps,
+            "Configuring structural Git merge driver...",
+            || -> Result<()> {
+                let gitattributes_path = workspace_root.join(".gitattributes");
+                let existing_ga = fs::read_to_string(&gitattributes_path).unwrap_or_default();
+                if !existing_ga.contains("merge=claimwire") {
+                    let mut updated = existing_ga;
+                    if !updated.is_empty() && !updated.ends_with('\n') {
+                        updated.push('\n');
+                    }
+                    updated.push_str(".claimwire/evidence.lock.json merge=claimwire\n");
+                    fs::write(&gitattributes_path, updated)?;
                 }
-                updated.push_str(".claimwire/evidence.lock.json merge=claimwire\n");
-                fs::write(&gitattributes_path, updated)?;
-            }
-            if workspace_root.join(".git").exists() {
-                let _ = Command::new("git")
-                    .args(["config", "merge.claimwire.name", "Claim Wire structural merge driver"])
-                    .current_dir(workspace_root)
-                    .output();
-                let _ = Command::new("git")
-                    .args(["config", "merge.claimwire.driver", "cw merge-driver %O %A %B"])
-                    .current_dir(workspace_root)
-                    .output();
-            }
-            Ok(())
-        })?;
+                if workspace_root.join(".git").exists() {
+                    let _ = Command::new("git")
+                        .args([
+                            "config",
+                            "merge.claimwire.name",
+                            "Claim Wire structural merge driver",
+                        ])
+                        .current_dir(workspace_root)
+                        .output();
+                    let _ = Command::new("git")
+                        .args([
+                            "config",
+                            "merge.claimwire.driver",
+                            "cw merge-driver %O %A %B",
+                        ])
+                        .current_dir(workspace_root)
+                        .output();
+                }
+                Ok(())
+            },
+        )?;
         println!(
             "  {} {}  {}",
             styler.green_bold("╰─✦"),
@@ -188,7 +209,7 @@ pub fn cmd_scan(workspace_root: &Path, args: &[String], styler: &Styler) -> Resu
     }
 
     if md_files.is_empty() {
-        md_files = collect_markdown_files(workspace_root);
+        md_files = cw_engine::list_workspace_markdown(workspace_root);
     }
 
     if md_files.is_empty() {
@@ -331,55 +352,10 @@ pub fn cmd_scan(workspace_root: &Path, args: &[String], styler: &Styler) -> Resu
             styler.cyan_bold("cw explain CW1008")
         );
     } else {
-        println!(
-            "  ╰─ {} 0 table syntax warnings",
-            styler.badge_ok("CLEAN")
-        );
+        println!("  ╰─ {} 0 table syntax warnings", styler.badge_ok("CLEAN"));
     }
 
     Ok(0)
-}
-
-fn collect_markdown_files(workspace_root: &Path) -> Vec<String> {
-    let mut md_files = Vec::new();
-    if workspace_root.join("README.md").is_file() {
-        md_files.push("README.md".to_string());
-    }
-    fn walk_md(root: &Path, dir: &Path, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk_md(root, &path, out);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("md")
-                && let Ok(rel) = path.strip_prefix(root)
-            {
-                let rel_slash = rel
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                out.push(rel_slash);
-            }
-        }
-    }
-    let docs_dir = workspace_root.join("docs");
-    if docs_dir.is_dir() {
-        walk_md(workspace_root, &docs_dir, &mut md_files);
-    }
-    md_files.sort_by(|a, b| {
-        if a == "README.md" {
-            std::cmp::Ordering::Less
-        } else if b == "README.md" {
-            std::cmp::Ordering::Greater
-        } else {
-            a.cmp(b)
-        }
-    });
-    md_files.dedup();
-    md_files
 }
 
 fn count_unbound_tables(source: &str) -> Vec<(usize, usize, String)> {
@@ -406,18 +382,12 @@ fn count_unbound_tables(source: &str) -> Vec<(usize, usize, String)> {
             }
             continue;
         }
-        if i + 1 < lines.len()
-            && t.contains('|')
-            && is_delimiter_row(lines[i + 1].trim())
-        {
+        if i + 1 < lines.len() && t.contains('|') && is_delimiter_row(lines[i + 1].trim()) {
             let hdr_line = i + 1;
             let hdr_preview = t.trim_matches('|').trim().to_string();
             i += 2;
             let mut rows = 0usize;
-            while i < lines.len()
-                && !lines[i].trim().is_empty()
-                && lines[i].trim().contains('|')
-            {
+            while i < lines.len() && !lines[i].trim().is_empty() && lines[i].trim().contains('|') {
                 rows += 1;
                 i += 1;
             }
@@ -482,7 +452,10 @@ pub fn cmd_status(workspace_root: &Path, styler: &Styler) -> Result<u8> {
 
     println!(
         "{}",
-        styler.banner("Claim Wire Workspace Dashboard", &workspace_root.display().to_string())
+        styler.banner(
+            "Claim Wire Workspace Dashboard",
+            &workspace_root.display().to_string()
+        )
     );
 
     // 1. Producers section
@@ -495,7 +468,12 @@ pub fn cmd_status(workspace_root: &Path, styler: &Styler) -> Result<u8> {
         ))
     );
     for (prod_id, prod_decl) in &ctx.evidence.config.producers {
-        let is_fresh = ctx.evidence.freshness.get(prod_id).copied().unwrap_or(false);
+        let is_fresh = ctx
+            .evidence
+            .freshness
+            .get(prod_id)
+            .copied()
+            .unwrap_or(false);
         let badge = if is_fresh {
             styler.badge_ok("✓ FRESH")
         } else {
@@ -594,9 +572,7 @@ pub fn cmd_status(workspace_root: &Path, styler: &Styler) -> Result<u8> {
         );
     }
     for loc in &ctx.lowering.locations {
-        let entry = by_file
-            .entry(loc.file.clone())
-            .or_insert((0, 0, 0, 0, 0));
+        let entry = by_file.entry(loc.file.clone()).or_insert((0, 0, 0, 0, 0));
         entry.3 += 1;
         if loc.current_text != loc.expected_text {
             entry.4 += 1;
@@ -625,7 +601,9 @@ pub fn cmd_status(workspace_root: &Path, styler: &Styler) -> Result<u8> {
         println!(
             "  {status}  {bar}  {:<26} {}",
             styler.bold(file),
-            styler.dim(&format!("({tables} tables, {blocks} blocks, {spans} spans)"))
+            styler.dim(&format!(
+                "({tables} tables, {blocks} blocks, {spans} spans)"
+            ))
         );
     }
 
@@ -659,12 +637,10 @@ pub fn cmd_status(workspace_root: &Path, styler: &Styler) -> Result<u8> {
 /// `cw list [producers|families|claims|assertions|locations]`: Inspect declared entities and current values.
 pub fn cmd_list(workspace_root: &Path, args: &[String], styler: &Styler) -> Result<u8> {
     let filter = args.first().map(|s| s.as_str()).unwrap_or("all");
-    let (ctx_opt, diagnostics) = styler.animate_stage(
-        1,
-        1,
-        "Loading & evaluating Claim Wire IR...",
-        || load_workspace_pipeline(workspace_root, false, None),
-    )?;
+    let (ctx_opt, diagnostics) =
+        styler.animate_stage(1, 1, "Loading & evaluating Claim Wire IR...", || {
+            load_workspace_pipeline(workspace_root, false, None)
+        })?;
     let Some(ctx) = ctx_opt else {
         for d in &diagnostics {
             print!("{}", styler.style_diagnostic(&d.format_human()));
@@ -691,7 +667,11 @@ pub fn cmd_list(workspace_root: &Path, args: &[String], styler: &Styler) -> Resu
             } else {
                 styler.badge_err("✗ STALE")
             };
-            let run = decl.epochs.get("current").map(|s| s.as_str()).unwrap_or("—");
+            let run = decl
+                .epochs
+                .get("current")
+                .map(|s| s.as_str())
+                .unwrap_or("—");
             println!(
                 "  {fresh}  {:<18} @current={:<24} {}",
                 styler.cyan_bold(id),
@@ -1001,6 +981,12 @@ pub fn explain_diagnostic_code(raw: &str, styler: &Styler) -> Option<String> {
             "Context Window Auditor (cw-engine §8.3)",
             "The sentence or table row surrounding a bound location was edited (for example, changing `At T = 2^22` to `At T = 2^24`) while the claim binding itself was left unchanged.",
             "Verify whether the prose edit changed the meaning of the claim. If the binding needs updating, edit the `cw:` reference; if the prose edit was harmless, acknowledge it with `cw sync --ack-context`.",
+        ),
+        "CW4003" => (
+            "Locked location no longer present in Markdown",
+            "Coverage Auditor (cw-engine §8.4)",
+            "`.claimwire/evidence.lock.json` records an owned span, cell, or block line that the current Markdown no longer contains. A deleted span or a removed table row would otherwise shrink coverage while `cw check` stays green.",
+            "Restore the binding if the removal was accidental. If it was intentional, run `cw sync` (which prunes the lockfile entry and reports it) and commit the lockfile change so the removal is reviewed.",
         ),
         _ => return None,
     };

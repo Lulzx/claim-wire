@@ -72,7 +72,13 @@ impl ValueType {
     pub fn is_deterministic_by_default(&self) -> bool {
         matches!(
             self,
-            Self::Bytes | Self::Cycles | Self::Count | Self::PassRatio | Self::Digest | Self::Bool | Self::String
+            Self::Bytes
+                | Self::Cycles
+                | Self::Count
+                | Self::PassRatio
+                | Self::Digest
+                | Self::Bool
+                | Self::String
         )
     }
 

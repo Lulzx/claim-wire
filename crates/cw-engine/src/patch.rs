@@ -5,7 +5,7 @@ use crate::eval::{
     EvalChannel, EvaluationOutput, build_lockfile_claims_and_producers, evaluate_all,
     make_family_claim_key,
 };
-use crate::lockfile::EvidenceLockfile;
+use crate::lockfile::{EvidenceLockfile, LockedLocation};
 use crate::lower::{
     BoundLocation, LoweringResult, audit_locations, build_locked_locations, lower_workspace,
 };
@@ -13,8 +13,8 @@ use anyhow::{Context, Result, bail};
 use cw_evidence::{EvidenceConfig, LoadedEvidenceStore, short_digest};
 use cw_ir::{CheckedIr, ClaimsConfig, Expr, check_claims_config, parse_expr};
 use cw_syntax::{
-    ClaimRef, Diagnostic, Severity, ValueType, apply_byte_patches, format_number_half_to_even,
-    from_yaml_str,
+    ClaimRef, Diagnostic, DiagnosticCode, Severity, ValueType, YamlNode, apply_byte_patches,
+    format_number_half_to_even, from_yaml_str,
 };
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
@@ -114,13 +114,18 @@ pub fn load_workspace_pipeline(
     let evidence_src = fs::read_to_string(&evidence_path)
         .with_context(|| format!("Failed to read `{}`", evidence_path.display()))?;
 
-    let (claims_cfg, _) = from_yaml_str::<ClaimsConfig>(&claims_src)?;
-    let (evidence_cfg, _) = from_yaml_str::<EvidenceConfig>(&evidence_src)?;
+    let (claims_cfg, claims_node) = from_yaml_str::<ClaimsConfig>(&claims_src)?;
+    let (evidence_cfg, evidence_node) = from_yaml_str::<EvidenceConfig>(&evidence_src)?;
+    let config_nodes = [
+        (".claimwire/claims.yaml", &claims_node),
+        (".claimwire/evidence.yaml", &evidence_node),
+    ];
 
     let ir = match check_claims_config(&claims_cfg) {
         Ok(checked) => checked,
         Err(errs) => {
             diagnostics.extend(errs);
+            resolve_config_locations(&mut diagnostics, &config_nodes);
             return Ok((None, diagnostics));
         }
     };
@@ -134,6 +139,7 @@ pub fn load_workspace_pipeline(
 
     let lowering = lower_workspace(workspace_root, &ir, &eval.display, explicit_files)?;
     diagnostics.extend(lowering.diagnostics.iter().cloned());
+    resolve_config_locations(&mut diagnostics, &config_nodes);
 
     Ok((
         Some(WorkspaceContext {
@@ -147,6 +153,67 @@ pub fn load_workspace_pipeline(
     ))
 }
 
+/// Lockfile locations whose Markdown binding disappeared, as `(location id, file)`.
+/// Files that already carry an error (a broken lens, an unmatched block line) are skipped:
+/// that error explains the missing locations and fixing it brings them back.
+fn vanished_locations(
+    lock: &EvidenceLockfile,
+    lowering: &LoweringResult,
+    explicit_files: Option<&[String]>,
+    diagnostics: &[Diagnostic],
+) -> Vec<(String, String)> {
+    let present: IndexSet<&str> = lowering.locations.iter().map(|l| l.id.as_str()).collect();
+    // A lens error (moved or deleted directive) already accounts for that lens's locations.
+    let errored_lenses: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error && d.code == DiagnosticCode::CW2003)
+        .map(|d| d.message.as_str())
+        .collect();
+    let errored_files: IndexSet<&str> = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .filter_map(|d| d.file.as_deref())
+        .collect();
+    let has_config_error = errored_files.iter().any(|f| f.starts_with(".claimwire/"));
+    lock.locations
+        .keys()
+        .filter(|id| !present.contains(id.as_str()))
+        .filter_map(|id| {
+            let file = id.split("::").next()?.to_string();
+            let lens = id
+                .split("::")
+                .nth(1)
+                .and_then(|k| k.split_once(':'))
+                .map(|(_, l)| l);
+            if lens.is_some_and(|l| {
+                errored_lenses
+                    .iter()
+                    .any(|m| m.contains(&format!("lens `{l}`")))
+            }) {
+                return None;
+            }
+            let in_scope = explicit_files.is_none_or(|fs| fs.iter().any(|f| f == &file));
+            (in_scope && !has_config_error && !errored_files.contains(file.as_str()))
+                .then(|| (id.clone(), file))
+        })
+        .collect()
+}
+
+/// Point diagnostics that carry a YAML key path at that key's line instead of `1:1`.
+fn resolve_config_locations(diagnostics: &mut [Diagnostic], nodes: &[(&str, &YamlNode)]) {
+    for d in diagnostics.iter_mut() {
+        let Some(path) = &d.config_path else { continue };
+        let Some((_, node)) = nodes.iter().find(|(f, _)| d.file.as_deref() == Some(*f)) else {
+            continue;
+        };
+        let segs: Vec<&str> = path.iter().map(String::as_str).collect();
+        if let Some(span) = node.get_path_span(&segs) {
+            d.line = Some(span.line);
+            d.col = Some(span.col);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckReport {
     pub diagnostics: Vec<Diagnostic>,
@@ -156,9 +223,9 @@ pub struct CheckReport {
 
 impl CheckReport {
     pub fn has_errors(&self, deny_warnings: bool) -> bool {
-        self.diagnostics
-            .iter()
-            .any(|d| d.severity == Severity::Error || (deny_warnings && d.severity == Severity::Warning))
+        self.diagnostics.iter().any(|d| {
+            d.severity == Severity::Error || (deny_warnings && d.severity == Severity::Warning)
+        })
     }
 }
 
@@ -174,7 +241,7 @@ pub fn run_check_files(
         load_workspace_pipeline(workspace_root, false, explicit_files)?;
     let Some(ctx) = ctx_opt else {
         return Ok(CheckReport {
-            failed_locations: diagnostics.len(),
+            failed_locations: 0,
             diagnostics,
             total_locations: 0,
         });
@@ -189,8 +256,24 @@ pub fn run_check_files(
         false,
         false,
     );
-    let failed_locations = audit_diags.len();
+    // One location can carry both CW4001 and CW4002; count locations, not diagnostics.
+    let failed_locations = audit_diags
+        .iter()
+        .map(|d| (d.file.clone(), d.line, d.col))
+        .collect::<IndexSet<_>>()
+        .len();
     diagnostics.extend(audit_diags);
+    if let Some(lock) = &ctx.lockfile {
+        let vanished = vanished_locations(lock, &ctx.lowering, explicit_files, &diagnostics);
+        diagnostics.extend(vanished.into_iter().map(|(id, file)| {
+            Diagnostic::error(
+                DiagnosticCode::CW4003,
+                format!("Locked location `{id}` is no longer present in Markdown"),
+            )
+            .with_location(file, 1, 1)
+            .with_help("restore the binding, or run `cw sync` to prune it from `.claimwire/evidence.lock.json` and commit the removal")
+        }));
+    }
 
     Ok(CheckReport {
         diagnostics,
@@ -214,6 +297,8 @@ pub struct SyncReport {
     pub patched_items: Vec<PatchedItem>,
     pub files_written: usize,
     pub lockfile_updated: bool,
+    /// Lockfile locations dropped because their Markdown binding no longer exists.
+    pub pruned_locations: Vec<String>,
     /// Map of `rel_file -> (old_source, new_source)` for changed Markdown files.
     pub file_diffs: IndexMap<String, (String, String)>,
 }
@@ -241,6 +326,7 @@ pub fn run_sync_options(
             patched_items: Vec::new(),
             files_written: 0,
             lockfile_updated: false,
+            pruned_locations: Vec::new(),
             file_diffs: IndexMap::new(),
         });
     };
@@ -265,12 +351,14 @@ pub fn run_sync_options(
             patched_items: Vec::new(),
             files_written: 0,
             lockfile_updated: false,
+            pruned_locations: Vec::new(),
             file_diffs: IndexMap::new(),
         });
     }
 
     // Group patches per Markdown file
-    let mut patches_by_file: IndexMap<String, Vec<(cw_syntax::ByteRange, String)>> = IndexMap::new();
+    let mut patches_by_file: IndexMap<String, Vec<(cw_syntax::ByteRange, String)>> =
+        IndexMap::new();
     let mut patched_items = Vec::new();
 
     for loc in &ctx.lowering.locations {
@@ -311,6 +399,17 @@ pub fn run_sync_options(
     let (producers, evaluated_claims) =
         build_lockfile_claims_and_producers(&ctx.eval.display, &ctx.evidence);
     let locations = build_locked_locations(&ctx.lowering.locations, true);
+    let pruned_locations: Vec<String> = ctx
+        .lockfile
+        .as_ref()
+        .map(|l| {
+            l.locations
+                .keys()
+                .filter(|k| !locations.contains_key(*k))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
     let new_lockfile = EvidenceLockfile {
         schema: "claimwire-lock/v3".to_string(),
         producers,
@@ -337,6 +436,7 @@ pub fn run_sync_options(
         patched_items,
         files_written: md_files_written,
         lockfile_updated: md_files_written > 0 || lockfile_changed,
+        pruned_locations,
         file_diffs,
     })
 }
@@ -383,10 +483,7 @@ pub fn run_adopt(workspace_root: &Path, explicit_files: Option<&[String]>) -> Re
                         manifest.input_set_digest = tree_digest;
                         manifest.input_files = file_digests;
                         let rel_path = format!(".claimwire/runs/{prod_id}/{run_id}.json");
-                        writes.insert(
-                            rel_path,
-                            serde_json::to_string_pretty(manifest)? + "\n",
-                        );
+                        writes.insert(rel_path, serde_json::to_string_pretty(manifest)? + "\n");
                     }
                 }
             }
@@ -398,10 +495,19 @@ pub fn run_adopt(workspace_root: &Path, explicit_files: Option<&[String]>) -> Re
 
     // Record the existing Markdown bytes (`use_expected_text = false`) in `locations`,
     // so zero Markdown bytes are touched while `cw check` can immediately compare Markdown against evidence!
-    let mut locations = ctx
+    // Entries for re-adopted files are rebuilt from scratch so bindings removed since the last
+    // adopt don't linger; with an explicit file list, other files' entries are kept.
+    let adopted_files: IndexSet<String> = ctx.lowering.documents.keys().cloned().collect();
+    let mut locations: IndexMap<String, LockedLocation> = ctx
         .lockfile
         .map(|l| l.locations)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| {
+            let file = k.split("::").next().unwrap_or_default();
+            explicit_files.is_some() && !adopted_files.contains(file)
+        })
+        .collect();
     for (k, v) in build_locked_locations(&ctx.lowering.locations, false) {
         locations.insert(k, v);
     }
@@ -608,14 +714,14 @@ pub fn run_explain(workspace_root: &Path, query: &str) -> Result<String> {
                         "{}:{}  \"{}\"\n",
                         loc.file, loc.line, loc.current_text
                     ));
-                    for (c_idx, claim_key) in loc.referenced_claims.iter().enumerate() {
-                        let is_last = c_idx + 1 == loc.referenced_claims.len();
-                        let branch = if is_last { "└─" } else { "├─" };
-                        let indent = if is_last { "   " } else { "│  " };
-                        explain_claim_tree(&mut out, claim_key, branch, indent, &ctx);
-                    }
+                    explain_location_claims(&mut out, loc, &ctx);
                 }
                 return Ok(out);
+            }
+            if ctx.lowering.documents.contains_key(file_part) {
+                bail!(
+                    "No Claim Wire location on `{file_part}:{line_no}` (try `cw list locations`)"
+                );
             }
         }
     }
@@ -623,21 +729,33 @@ pub fn run_explain(workspace_root: &Path, query: &str) -> Result<String> {
     // 2. Otherwise treat `query` as a claim reference or location ID
     if let Some(loc) = ctx.lowering.locations.iter().find(|l| l.id == query) {
         let mut out = format!("{}:{}  \"{}\"\n", loc.file, loc.line, loc.current_text);
-        for (c_idx, claim_key) in loc.referenced_claims.iter().enumerate() {
-            let is_last = c_idx + 1 == loc.referenced_claims.len();
-            let branch = if is_last { "└─" } else { "├─" };
-            let indent = if is_last { "   " } else { "│  " };
-            explain_claim_tree(&mut out, claim_key, branch, indent, &ctx);
-        }
+        explain_location_claims(&mut out, loc, &ctx);
         return Ok(out);
     }
 
     let cref = ClaimRef::parse(query)
         .map_err(|d| anyhow::anyhow!("Invalid claim or location `{query}`: {}", d.message))?;
+    cw_ir::resolve_claim_ref_type(&cref, &ctx.ir.config, None, false).map_err(|d| {
+        anyhow::anyhow!(
+            "Unknown claim `{query}`: {} (try `cw list claims`)",
+            d.message
+        )
+    })?;
     let canon = cref.canonical_string();
     let mut out = String::new();
     explain_claim_tree(&mut out, &canon, "└─", "   ", &ctx);
     Ok(out)
+}
+
+/// Explain each distinct claim a location renders (a block line may repeat `matrix.total`).
+fn explain_location_claims(out: &mut String, loc: &BoundLocation, ctx: &WorkspaceContext) {
+    let claims: IndexSet<&String> = loc.referenced_claims.iter().collect();
+    for (c_idx, claim_key) in claims.iter().enumerate() {
+        let is_last = c_idx + 1 == claims.len();
+        let branch = if is_last { "└─" } else { "├─" };
+        let indent = if is_last { "   " } else { "│  " };
+        explain_claim_tree(out, claim_key, branch, indent, ctx);
+    }
 }
 
 fn explain_claim_tree(
@@ -682,7 +800,8 @@ fn explain_claim_tree(
                     {
                         let is_last = i + 1 == leaves.len();
                         let sub_branch = if is_last { "└─" } else { "├─" };
-                        let val_str = format_claim_human_value(leaf_canon, &ctx.eval.display, &ctx.ir);
+                        let val_str =
+                            format_claim_human_value(leaf_canon, &ctx.eval.display, &ctx.ir);
                         if !leaf_prod.is_empty() {
                             out.push_str(&format!(
                                 "{child_indent}{sub_branch} {leaf_label:<10} = {val_str:<11} ← {leaf_prod}@{leaf_ep}\n"
@@ -756,7 +875,10 @@ fn collect_explain_leaves(
             for (dim, sel) in fam_decl.dimensions.iter().zip(fref.selectors.iter()) {
                 if let cw_syntax::Selector::Point(k) = sel {
                     let v = if !k.was_quoted {
-                        scope.get(&k.value).cloned().unwrap_or_else(|| k.value.clone())
+                        scope
+                            .get(&k.value)
+                            .cloned()
+                            .unwrap_or_else(|| k.value.clone())
                     } else {
                         k.value.clone()
                     };
@@ -770,12 +892,7 @@ fn collect_explain_leaves(
                 &target_scope,
                 &fref.field,
             );
-            out.push((
-                canon.clone(),
-                canon,
-                fam_decl.producer.clone(),
-                ep,
-            ));
+            out.push((canon.clone(), canon, fam_decl.producer.clone(), ep));
         }
         Expr::Reduction { op, target } => {
             let label = format!("{op:?}({target})").to_lowercase();
@@ -844,11 +961,7 @@ fn append_manifest_provenance(
         .as_deref()
         .map(|h| format!("  ({h})"))
         .unwrap_or_default();
-    let dirty_label = if manifest.git_dirty {
-        "dirty"
-    } else {
-        "clean"
-    };
+    let dirty_label = if manifest.git_dirty { "dirty" } else { "clean" };
     let fresh_label = if epoch == "current" {
         if *evidence.freshness.get(producer).unwrap_or(&true) {
             "fresh"

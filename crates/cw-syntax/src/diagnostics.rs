@@ -32,6 +32,7 @@ pub enum DiagnosticCode {
     // CW4xxx: Conflict & Context
     CW4001, // Unapproved manual edit inside owned span/cell/block
     CW4002, // Surrounding prose context drifted from locked context_digest
+    CW4003, // Locked location no longer present in Markdown
 }
 
 impl DiagnosticCode {
@@ -57,6 +58,7 @@ impl DiagnosticCode {
             Self::CW3004 => "CW3004",
             Self::CW4001 => "CW4001",
             Self::CW4002 => "CW4002",
+            Self::CW4003 => "CW4003",
         }
     }
 
@@ -82,6 +84,7 @@ impl DiagnosticCode {
             Self::CW3004 => "Value not representable in target format",
             Self::CW4001 => "Manual edit conflict inside owned location",
             Self::CW4002 => "Surrounding prose context drifted from locked context_digest",
+            Self::CW4003 => "Locked location no longer present in Markdown",
         }
     }
 }
@@ -129,6 +132,10 @@ pub struct Diagnostic {
     pub notes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
+    /// Key path inside a `.claimwire/*.yaml` file (`["assertions", "check.x"]`); the pipeline
+    /// resolves it to the key's line once the YAML source map is available.
+    #[serde(skip)]
+    pub config_path: Option<Vec<String>>,
 }
 
 impl fmt::Display for Diagnostic {
@@ -151,6 +158,7 @@ impl Diagnostic {
             label: None,
             notes: Vec::new(),
             help: None,
+            config_path: None,
         }
     }
 
@@ -167,6 +175,7 @@ impl Diagnostic {
             label: None,
             notes: Vec::new(),
             help: None,
+            config_path: None,
         }
     }
 
@@ -189,6 +198,15 @@ impl Diagnostic {
         self
     }
 
+    /// Locate this diagnostic at a key of a `.claimwire/*.yaml` file (line resolved later).
+    pub fn with_config_path(mut self, file: impl Into<String>, path: &[&str]) -> Self {
+        self.file = Some(file.into());
+        self.line = Some(1);
+        self.col = Some(1);
+        self.config_path = Some(path.iter().map(|s| s.to_string()).collect());
+        self
+    }
+
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
@@ -201,7 +219,10 @@ impl Diagnostic {
 
     pub fn format_human(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("{}[{}]: {}\n", self.severity, self.code, self.message));
+        out.push_str(&format!(
+            "{}[{}]: {}\n",
+            self.severity, self.code, self.message
+        ));
         if let Some(file) = &self.file {
             let line = self.line.unwrap_or(1);
             let col = self.col.unwrap_or(1);

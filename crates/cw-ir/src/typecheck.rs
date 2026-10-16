@@ -270,11 +270,12 @@ pub fn check_claims_config(config: &ClaimsConfig) -> Result<CheckedIr, Vec<Diagn
             }
             TableMode::Transposed => {
                 // Use the first column_scope's family as context if available
-                let first_fam = t_decl
-                    .column_scopes
-                    .values()
-                    .next()
-                    .and_then(|cs| config.families.get(&cs.family).map(|f| (cs.family.as_str(), f)));
+                let first_fam = t_decl.column_scopes.values().next().and_then(|cs| {
+                    config
+                        .families
+                        .get(&cs.family)
+                        .map(|f| (cs.family.as_str(), f))
+                });
                 for (_row_key, row_spec) in &t_decl.rows {
                     match row_spec {
                         TableRowSpec::Pattern(pat_str) => {
@@ -296,7 +297,12 @@ pub fn check_claims_config(config: &ClaimsConfig) -> Result<CheckedIr, Vec<Diagn
                     let col_fam = t_decl
                         .column_scopes
                         .get(col_hdr)
-                        .and_then(|cs| config.families.get(&cs.family).map(|f| (cs.family.as_str(), f)))
+                        .and_then(|cs| {
+                            config
+                                .families
+                                .get(&cs.family)
+                                .map(|f| (cs.family.as_str(), f))
+                        })
                         .or(first_fam);
                     for (_row_key, pat_str) in overrides {
                         validate_table_pattern(pat_str, config, col_fam, &mut diagnostics);
@@ -315,12 +321,7 @@ pub fn check_claims_config(config: &ClaimsConfig) -> Result<CheckedIr, Vec<Diagn
                         }
                         TableRowSpec::Columns(cols) => {
                             for (_col, pat_str) in cols {
-                                validate_table_pattern(
-                                    pat_str,
-                                    config,
-                                    opt_fam,
-                                    &mut diagnostics,
-                                );
+                                validate_table_pattern(pat_str, config, opt_fam, &mut diagnostics);
                             }
                         }
                     }
@@ -360,7 +361,9 @@ fn validate_table_pattern(
                 let Some(t) = target else {
                     return Err(Diagnostic::error(
                         DiagnosticCode::CW2003,
-                        format!("Placeholder in table pattern `{pat_str}` must name a metric or claim"),
+                        format!(
+                            "Placeholder in table pattern `{pat_str}` must name a metric or claim"
+                        ),
                     ));
                 };
                 if let Some(rest) = t.strip_prefix('@') {
@@ -393,7 +396,9 @@ pub fn infer_expr_type(
             let Some((fam_name, fam)) = family_ctx else {
                 return Err(Diagnostic::error(
                     DiagnosticCode::CW2004,
-                    format!("`@.field` shorthand (`{field}`) is only valid inside a family context"),
+                    format!(
+                        "`@.field` shorthand (`{field}`) is only valid inside a family context"
+                    ),
                 ));
             };
             resolve_family_field_type(fam_name, fam, field)
@@ -584,9 +589,7 @@ pub fn check_binary_op_types(
             } else {
                 Err(Diagnostic::error(
                     DiagnosticCode::CW2001,
-                    format!(
-                        "Dimensional unit mismatch: cannot compare `{lhs}` with `{rhs}`"
-                    ),
+                    format!("Dimensional unit mismatch: cannot compare `{lhs}` with `{rhs}`"),
                 ))
             }
         }
@@ -636,10 +639,7 @@ fn collect_family_local_deps(
                 deps.insert(fref.field.clone());
             }
         }
-        Expr::PrefixSum {
-            epoch: None,
-            field,
-        } => {
+        Expr::PrefixSum { epoch: None, field } => {
             if fam.derivations.contains_key(field) {
                 deps.insert(field.clone());
             }

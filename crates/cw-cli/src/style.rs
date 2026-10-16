@@ -64,7 +64,8 @@ impl AnimChoice {
                 if env::var_os("CW_ANIMATE").is_some() {
                     return true;
                 }
-                color_enabled && (std::io::stdout().is_terminal() || std::io::stderr().is_terminal())
+                color_enabled
+                    && (std::io::stdout().is_terminal() || std::io::stderr().is_terminal())
             }
         }
     }
@@ -343,7 +344,10 @@ impl Styler {
         let grad_filled = self.gray_gradient(&filled_str, 250, 170);
         let dim_empty = self.gray(82, &empty_str);
         let pct = (ratio * 100.0).round() as usize;
-        format!("{grad_filled}{dim_empty} {:>3}%", self.bold(&pct.to_string()))
+        format!(
+            "{grad_filled}{dim_empty} {:>3}%",
+            self.bold(&pct.to_string())
+        )
     }
 
     /// Render a sleek monochrome header banner when styled, or simple title when uncolored.

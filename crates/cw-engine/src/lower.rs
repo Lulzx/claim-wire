@@ -71,59 +71,88 @@ pub struct LoweringResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub fn discover_markdown_files(workspace_root: &Path, ir: &CheckedIr) -> Result<Vec<String>> {
-    let mut files = IndexSet::new();
-
-    if workspace_root.join("README.md").is_file() {
-        files.insert("README.md".to_string());
-    }
-    for b in ir.config.blocks.values() {
-        if workspace_root.join(&b.file).is_file() {
-            files.insert(b.file.clone());
-        }
-    }
-    for t in ir.config.tables.values() {
-        if workspace_root.join(&t.file).is_file() {
-            files.insert(t.file.clone());
-        }
-    }
-    let docs_dir = workspace_root.join("docs");
-    if docs_dir.is_dir() {
-        for entry in walkdir::WalkDir::new(&docs_dir)
+/// Every Markdown file in the workspace. Inside a Git work tree this is `git ls-files` (tracked
+/// plus untracked-but-not-ignored), so build output and vendored trees listed in `.gitignore` are
+/// skipped; otherwise the tree is walked, skipping hidden directories, `target`, and `node_modules`.
+pub fn list_workspace_markdown(workspace_root: &Path) -> Vec<String> {
+    let git = std::process::Command::new("git")
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+        ])
+        .args(["*.md", "*.markdown"])
+        .current_dir(workspace_root)
+        .output();
+    let mut files: Vec<String> = match git {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .split('\0')
+            .filter(|p| !p.is_empty() && workspace_root.join(p).is_file())
+            .map(str::to_string)
+            .collect(),
+        _ => walkdir::WalkDir::new(workspace_root)
             .into_iter()
+            .filter_entry(|e| {
+                e.depth() == 0
+                    || !(e.file_type().is_dir()
+                        && e.file_name().to_str().is_some_and(|n| {
+                            n.starts_with('.') || n == "target" || n == "node_modules"
+                        }))
+            })
             .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file()
-                && entry.path().extension().and_then(|e| e.to_str()) == Some("md")
-            {
-                if let Ok(rel) = entry.path().strip_prefix(workspace_root) {
-                    let rel_slash = rel
-                        .components()
+            .filter(|e| {
+                e.file_type().is_file()
+                    && matches!(
+                        e.path().extension().and_then(|x| x.to_str()),
+                        Some("md" | "markdown")
+                    )
+            })
+            .filter_map(|e| {
+                let rel = e.path().strip_prefix(workspace_root).ok()?;
+                Some(
+                    rel.components()
                         .map(|c| c.as_os_str().to_string_lossy())
                         .collect::<Vec<_>>()
-                        .join("/");
-                    if !files.contains(&rel_slash) {
-                        if let Ok(content) = fs::read_to_string(entry.path()) {
-                            if content.contains("<!-- cw:") {
-                                files.insert(rel_slash);
-                            }
-                        }
-                    }
-                }
+                        .join("/"),
+                )
+            })
+            .collect(),
+    };
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// Markdown files that `check`/`sync` must lower: every file declared by a lens plus every
+/// workspace Markdown file containing a `<!-- cw:` marker.
+pub fn discover_markdown_files(workspace_root: &Path, ir: &CheckedIr) -> Result<Vec<String>> {
+    let mut files = IndexSet::new();
+    for file in ir
+        .config
+        .blocks
+        .values()
+        .map(|b| &b.file)
+        .chain(ir.config.tables.values().map(|t| &t.file))
+    {
+        if workspace_root.join(file).is_file() {
+            files.insert(file.clone());
+        }
+    }
+    for rel in list_workspace_markdown(workspace_root) {
+        if files.contains(&rel) {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(workspace_root.join(&rel)) {
+            if content.contains("<!-- cw:") {
+                files.insert(rel);
             }
         }
     }
-
     let mut sorted: Vec<String> = files.into_iter().collect();
-    sorted.sort_by(|a, b| {
-        if a == "README.md" {
-            std::cmp::Ordering::Less
-        } else if b == "README.md" {
-            std::cmp::Ordering::Greater
-        } else {
-            a.cmp(b)
-        }
-    });
+    sorted.sort();
     Ok(sorted)
 }
 
@@ -141,6 +170,7 @@ pub fn lower_workspace(
     let mut documents = IndexMap::new();
     let mut diagnostics = Vec::new();
     let mut locations = Vec::new();
+    let in_scope: IndexSet<String> = md_files.iter().cloned().collect();
 
     for rel_file in md_files {
         let full_path = workspace_root.join(&rel_file);
@@ -188,11 +218,64 @@ pub fn lower_workspace(
         documents.insert(rel_file, doc);
     }
 
+    report_missing_lens_directives(workspace_root, ir, &in_scope, &documents, &mut diagnostics);
+
     Ok(LoweringResult {
         documents,
         locations,
         diagnostics,
     })
+}
+
+/// Every lens declared in `claims.yaml` must have its directive in its declared file. A deleted
+/// or misspelled `<!-- cw:table id -->` would otherwise drop all of the lens's locations while
+/// `cw check` keeps passing.
+fn report_missing_lens_directives(
+    workspace_root: &Path,
+    ir: &CheckedIr,
+    in_scope: &IndexSet<String>,
+    documents: &IndexMap<String, MarkdownDocument>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let declared = ir
+        .config
+        .tables
+        .iter()
+        .map(|(id, t)| ("table", id, &t.file))
+        .chain(
+            ir.config
+                .blocks
+                .iter()
+                .map(|(id, b)| ("block", id, &b.file)),
+        );
+    for (kind, lens_id, file) in declared {
+        let file_exists = workspace_root.join(file).is_file();
+        if file_exists && !in_scope.contains(file) {
+            continue; // `cw check <files...>` without this lens's file
+        }
+        let has_directive = |doc: &MarkdownDocument| match kind {
+            "table" => doc.tables.iter().any(|t| &t.lens_id == lens_id),
+            _ => doc.blocks.iter().any(|b| &b.lens_id == lens_id),
+        };
+        // A directive in another file is already reported as a file mismatch.
+        if documents.values().any(has_directive) {
+            continue;
+        }
+        let message = if file_exists {
+            format!(
+                "{kind} lens `{lens_id}` is declared for `{file}` but the file has no `<!-- cw:{kind} {lens_id} -->` directive"
+            )
+        } else {
+            format!("{kind} lens `{lens_id}` is declared for `{file}`, which does not exist")
+        };
+        diagnostics.push(
+            Diagnostic::error(DiagnosticCode::CW2003, message)
+                .with_config_path(".claimwire/claims.yaml", &[&format!("{kind}s"), lens_id])
+                .with_help(format!(
+                    "restore the directive above the {kind} in `{file}`, or remove the lens from `.claimwire/claims.yaml`"
+                )),
+        );
+    }
 }
 
 fn lower_inline_span(
@@ -299,6 +382,16 @@ fn lower_block_lens(
         );
         return;
     };
+    if block_decl.file != doc.file {
+        diagnostics.push(lens_file_mismatch(
+            "block",
+            &block_node.lens_id,
+            &block_decl.file,
+            &doc.file,
+            block_node.directive_line,
+        ));
+        return;
+    }
 
     for (pat_idx, pat_str) in block_decl.lines.iter().enumerate() {
         let pat = match FormatPattern::parse(pat_str) {
@@ -332,17 +425,41 @@ fn lower_block_lens(
 
         // §5.3: Each line pattern MUST match exactly one line in that block (`CW1006`).
         if matched_slices.len() != 1 {
-            diagnostics.push(
-                Diagnostic::error(
-                    DiagnosticCode::CW1006,
-                    format!(
-                        "Block lens `{}` pattern #{pat_idx} matched {} lines in block (expected exactly 1): `{pat_str}`",
-                        block_node.lens_id,
-                        matched_slices.len()
-                    ),
-                )
-                .with_location(&doc.file, block_node.directive_line, 1),
-            );
+            let mut diag = Diagnostic::error(
+                DiagnosticCode::CW1006,
+                format!(
+                    "Block lens `{}` pattern #{pat_idx} matched {} lines in block (expected exactly 1): `{pat_str}`",
+                    block_node.lens_id,
+                    matched_slices.len()
+                ),
+            )
+            .with_location(&doc.file, block_node.directive_line, 1);
+            if matched_slices.is_empty() {
+                // Point at the line that shares the most literal text with the pattern: usually
+                // the line that was reworded or rewrapped.
+                let closest = block_node
+                    .lines
+                    .iter()
+                    .map(|l| {
+                        let text = &doc.source[l.start..l.content_end];
+                        (literal_overlap(&pat, text), l, text)
+                    })
+                    .filter(|(score, _, _)| *score > 0)
+                    .max_by_key(|(score, l, _)| (*score, std::cmp::Reverse(l.line_no)));
+                if let Some((_, l, text)) = closest {
+                    diag = diag.with_location(&doc.file, l.line_no, 1).with_snippet(
+                        text,
+                        text.len(),
+                        "closest line; it no longer matches the pattern",
+                    );
+                }
+                diag = diag.with_help(
+                    "if the prose was reworded or rewrapped, update this line in `.claimwire/claims.yaml` `blocks:`; patterns match whole lines",
+                );
+            } else {
+                diag = diag.with_help("make the pattern specific enough to match a single line");
+            }
+            diagnostics.push(diag);
             continue;
         }
 
@@ -405,6 +522,40 @@ fn lower_block_lens(
     }
 }
 
+/// Characters of `pat`'s literal segments that occur, in order, in `line`.
+fn literal_overlap(pat: &FormatPattern, line: &str) -> usize {
+    let mut rest = line;
+    let mut score = 0;
+    for seg in &pat.segments {
+        if let PatternSegment::Literal(lit) = seg {
+            let lit = lit.trim();
+            if lit.is_empty() {
+                continue;
+            }
+            if let Some(pos) = rest.find(lit) {
+                score += lit.len();
+                rest = &rest[pos + lit.len()..];
+            }
+        }
+    }
+    score
+}
+
+fn lens_file_mismatch(
+    kind: &str,
+    lens_id: &str,
+    declared: &str,
+    found: &str,
+    line: usize,
+) -> Diagnostic {
+    Diagnostic::error(
+        DiagnosticCode::CW2003,
+        format!("{kind} lens `{lens_id}` is declared for `{declared}` but its directive appears in `{found}`"),
+    )
+    .with_location(found, line, 1)
+    .with_help(format!("update `file:` for `{lens_id}` in `.claimwire/claims.yaml`, or move the directive"))
+}
+
 fn lower_table_lens(
     doc: &MarkdownDocument,
     table_node: &TableLensNode,
@@ -423,6 +574,16 @@ fn lower_table_lens(
         );
         return;
     };
+    if table_decl.file != doc.file {
+        diagnostics.push(lens_file_mismatch(
+            "table",
+            &table_node.lens_id,
+            &table_decl.file,
+            &doc.file,
+            table_node.directive_line,
+        ));
+        return;
+    }
 
     if table_node.header.has_broken_code_span {
         return;
@@ -437,12 +598,10 @@ fn lower_table_lens(
     // Check optional `cell_patterns` on header cells (§5.2.4)
     for (pat_key, pat_str) in &table_decl.cell_patterns {
         if let Some(hdr_col_name) = pat_key.strip_prefix("header:") {
-            if let Some(cell) = table_node
-                .header
-                .cells
-                .iter()
-                .find(|c| c.text.trim().starts_with(hdr_col_name.trim()) || c.text.trim() == hdr_col_name.trim())
-            {
+            if let Some(cell) = table_node.header.cells.iter().find(|c| {
+                c.text.trim().starts_with(hdr_col_name.trim())
+                    || c.text.trim() == hdr_col_name.trim()
+            }) {
                 let opt_fam = table_decl
                     .family
                     .as_deref()
@@ -553,6 +712,12 @@ fn lower_records_table(
                 .with_location(file, table_node.header.line_no, 1),
             );
             return;
+        }
+    }
+
+    for col_hdr in table_decl.columns.keys() {
+        if find_column_index(header_map, col_hdr).is_none() {
+            diagnostics.push(missing_column_diag(file, table_node, col_hdr));
         }
     }
 
@@ -724,6 +889,12 @@ fn lower_transposed_table(
     };
 
     let known_row_keys: Vec<String> = table_decl.rows.keys().cloned().collect();
+    for col_hdr in table_decl.column_scopes.keys() {
+        if find_column_index(header_map, col_hdr).is_none() {
+            diagnostics.push(missing_column_diag(file, table_node, col_hdr));
+        }
+    }
+    let mut seen_rows: IndexSet<String> = IndexSet::new();
 
     for row in &table_node.rows {
         if row.has_broken_code_span {
@@ -736,6 +907,7 @@ fn lower_transposed_table(
         let Some(row_spec) = table_decl.rows.get(&row_key) else {
             continue;
         };
+        seen_rows.insert(row_key.clone());
 
         for (col_hdr, col_scope_decl) in &table_decl.column_scopes {
             let Some(&col_idx) = find_column_index(header_map, col_hdr) else {
@@ -782,6 +954,26 @@ fn lower_transposed_table(
             );
         }
     }
+
+    report_unmatched_rows(file, table_node, &known_row_keys, &seen_rows, diagnostics);
+}
+
+fn report_unmatched_rows(
+    file: &str,
+    table_node: &TableLensNode,
+    declared: &[String],
+    seen: &IndexSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    // Rows inside a CW1008 broken code span are already reported; don't pile on.
+    if table_node.rows.iter().any(|r| r.has_broken_code_span) {
+        return;
+    }
+    for key in declared {
+        if !seen.contains(key) {
+            diagnostics.push(missing_row_diag(file, table_node, key));
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -802,6 +994,8 @@ fn lower_checklist_table(
         .unwrap_or(0);
 
     let known_row_keys: Vec<String> = table_decl.rows.keys().cloned().collect();
+    let mut seen_rows: IndexSet<String> = IndexSet::new();
+    let mut reported_cols: IndexSet<String> = IndexSet::new();
     let opt_fam = table_decl
         .family
         .as_deref()
@@ -818,9 +1012,13 @@ fn lower_checklist_table(
         let Some(TableRowSpec::Columns(col_patterns)) = table_decl.rows.get(&row_key) else {
             continue;
         };
+        seen_rows.insert(row_key.clone());
 
         for (col_hdr, pat_str) in col_patterns {
             let Some(&col_idx) = find_column_index(header_map, col_hdr) else {
+                if reported_cols.insert(col_hdr.clone()) {
+                    diagnostics.push(missing_column_diag(file, table_node, col_hdr));
+                }
                 continue;
             };
             let cell = &row.cells[col_idx];
@@ -843,6 +1041,35 @@ fn lower_checklist_table(
             );
         }
     }
+
+    report_unmatched_rows(file, table_node, &known_row_keys, &seen_rows, diagnostics);
+}
+
+/// A lens column declared in `claims.yaml` that the Markdown table does not have.
+/// Silently skipping it would let a header rename drop coverage while `cw check` stays green.
+fn missing_column_diag(file: &str, table_node: &TableLensNode, col_hdr: &str) -> Diagnostic {
+    Diagnostic::error(
+        DiagnosticCode::CW2003,
+        format!(
+            "Column `{col_hdr}` declared for table lens `{}` is not a header of the table",
+            table_node.lens_id
+        ),
+    )
+    .with_location(file, table_node.header.line_no, 1)
+    .with_help("rename the column in `.claimwire/claims.yaml` to match the header, or remove it from the lens")
+}
+
+/// A lens row declared in `claims.yaml` that no Markdown row resolves to.
+fn missing_row_diag(file: &str, table_node: &TableLensNode, row_key: &str) -> Diagnostic {
+    Diagnostic::error(
+        DiagnosticCode::CW2003,
+        format!(
+            "Row `{row_key}` declared for table lens `{}` matches no row of the table",
+            table_node.lens_id
+        ),
+    )
+    .with_location(file, table_node.directive_line, 1)
+    .with_help("rename the row key in `.claimwire/claims.yaml` to match the table, or remove it from the lens")
 }
 
 fn find_column_index<'a>(
@@ -916,14 +1143,8 @@ fn bind_single_table_cell(
                 format!("Unnamed placeholder in table `{lens_id}` pattern `{pat_str}`"),
             ));
         };
-        let (val, ty, canon_claim) = resolve_table_placeholder_value(
-            t,
-            family_ctx,
-            default_epoch,
-            row_scope,
-            channel,
-            ir,
-        )?;
+        let (val, ty, canon_claim) =
+            resolve_table_placeholder_value(t, family_ctx, default_epoch, row_scope, channel, ir)?;
         if !canon_claim.is_empty() && !referenced_claims.contains(&canon_claim) {
             referenced_claims.push(canon_claim);
         }
@@ -1238,8 +1459,7 @@ pub fn audit_locations(
             let other_locs: Vec<&BoundLocation> = locations
                 .iter()
                 .filter(|other| {
-                    other.id != loc.id
-                        && other.referenced_claims.contains(&primary_claim)
+                    other.id != loc.id && other.referenced_claims.contains(&primary_claim)
                 })
                 .collect();
             if !other_locs.is_empty() {
@@ -1287,10 +1507,7 @@ fn format_evidence_note(
         }
         ClaimRef::Family(fref) => {
             let fam = ir.config.families.get(&fref.family)?;
-            (
-                fam.producer.clone(),
-                fref.effective_epoch().to_string(),
-            )
+            (fam.producer.clone(), fref.effective_epoch().to_string())
         }
     };
     let manifest = evidence.get_manifest(&prod_id, &epoch)?;

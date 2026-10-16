@@ -5,7 +5,7 @@ use crate::fingerprint::{FingerprintCache, compute_input_set_digest, expand_inpu
 use anyhow::{Context, Result, bail};
 use cw_ir::ClaimsConfig;
 use cw_syntax::{CanonicalValue, Diagnostic, DiagnosticCode, Severity, unquote_str};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -71,6 +71,9 @@ pub struct RunManifest {
     pub git_dirty: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hardware: Option<String>,
+    /// The command `cw capture` actually executed (may differ from the declared one via `-- <cmd>`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub environment: IndexMap<String, String>,
     pub input_set_digest: String,
@@ -215,6 +218,10 @@ impl LoadedEvidenceStore {
                                         file: Some(".claimwire/evidence.yaml".to_string()),
                                         line: Some(1),
                                         col: Some(1),
+                                        config_path: Some(vec![
+                                            "producers".to_string(),
+                                            prod_id.clone(),
+                                        ]),
                                         span_len: None,
                                         snippet_line: None,
                                         label: None,
@@ -352,9 +359,7 @@ pub fn parse_and_validate_cw_frames(
                     continue;
                 }
                 let Some(m_decl) = fam_decl.metrics.get(k) else {
-                    bail!(
-                        "Unknown metric `{k}` for family `{fam_name}` in frame `{trimmed}`"
-                    );
+                    bail!("Unknown metric `{k}` for family `{fam_name}` in frame `{trimmed}`");
                 };
                 let parsed_val = CanonicalValue::parse_literal(v, &m_decl.value_type)
                     .map_err(|d| anyhow::anyhow!("Invalid metric `{k}={v}`: {}", d.message))?;
@@ -366,18 +371,25 @@ pub fn parse_and_validate_cw_frames(
                 .push(EvidenceRecord { scope, metrics });
         } else {
             // Scalar source frame for producer (e.g. `@cw:record rust_tests=362 python_tests=227` or `metric="rust_tests" value=362`)
-            if kv_pairs.len() == 2 && kv_pairs.contains_key("metric") && kv_pairs.contains_key("value") {
+            if kv_pairs.len() == 2
+                && kv_pairs.contains_key("metric")
+                && kv_pairs.contains_key("value")
+            {
                 let m_name = &kv_pairs["metric"];
                 let val_str = &kv_pairs["value"];
                 let claim_decl = find_scalar_source_claim(claims_config, producer_id, m_name)?;
                 let parsed = CanonicalValue::parse_literal(val_str, &claim_decl.value_type)
-                    .map_err(|d| anyhow::anyhow!("Invalid scalar `{m_name}={val_str}`: {}", d.message))?;
+                    .map_err(|d| {
+                        anyhow::anyhow!("Invalid scalar `{m_name}={val_str}`: {}", d.message)
+                    })?;
                 scalars.insert(m_name.clone(), parsed);
             } else {
                 for (m_name, val_str) in &kv_pairs {
                     let claim_decl = find_scalar_source_claim(claims_config, producer_id, m_name)?;
                     let parsed = CanonicalValue::parse_literal(val_str, &claim_decl.value_type)
-                        .map_err(|d| anyhow::anyhow!("Invalid scalar `{m_name}={val_str}`: {}", d.message))?;
+                        .map_err(|d| {
+                            anyhow::anyhow!("Invalid scalar `{m_name}={val_str}`: {}", d.message)
+                        })?;
                     scalars.insert(m_name.clone(), parsed);
                 }
             }
@@ -400,9 +412,7 @@ fn find_scalar_source_claim<'a>(
             return Ok(c_decl);
         }
     }
-    bail!(
-        "Unknown scalar metric `{metric_name}` for producer `{producer_id}`"
-    )
+    bail!("Unknown scalar metric `{metric_name}` for producer `{producer_id}`")
 }
 
 fn parse_frame_kv_pairs(s: &str) -> Result<IndexMap<String, String>> {
@@ -459,6 +469,8 @@ fn parse_frame_kv_pairs(s: &str) -> Result<IndexMap<String, String>> {
 
 /// Run a producer command, capture `@cw:record` frames, fingerprint inputs, write an immutable
 /// run manifest `.claimwire/runs/<producer>/<run-id>.json`, and update `.claimwire/evidence.yaml` `@current`.
+/// Returns `(manifest, manifest path, reused)`; `reused` means an identical earlier run was re-pointed
+/// to instead of writing a new manifest.
 pub fn execute_capture(
     workspace_root: &Path,
     producer_id: &str,
@@ -466,7 +478,7 @@ pub fn execute_capture(
     run_id_override: Option<&str>,
     evidence_config: &EvidenceConfig,
     claims_config: &ClaimsConfig,
-) -> Result<(RunManifest, String)> {
+) -> Result<(RunManifest, String, bool)> {
     let Some(prod_decl) = evidence_config.producers.get(producer_id) else {
         bail!("Unknown producer `{producer_id}` in `.claimwire/evidence.yaml`");
     };
@@ -479,6 +491,7 @@ pub fn execute_capture(
         bail!("No command specified for producer `{producer_id}`");
     }
 
+    let input_files_before = fingerprint_producer_inputs(workspace_root, prod_decl)?;
     let output = Command::new(&cmd_vec[0])
         .args(&cmd_vec[1..])
         .current_dir(workspace_root)
@@ -504,15 +517,26 @@ pub fn execute_capture(
         bail!("Producer `{producer_id}` emitted zero `@cw:record` frames");
     }
 
-    // Compute input fingerprints
-    let (mut fp_cache, cache_mtime_ns) = FingerprintCache::load(workspace_root);
-    let rel_files = expand_input_globs(workspace_root, &prod_decl.inputs.files)?;
-    let mut input_files = IndexMap::new();
-    for rel_path in &rel_files {
-        let (digest, _) = fp_cache.fingerprint_file(workspace_root, rel_path, cache_mtime_ns)?;
-        input_files.insert(rel_path.clone(), digest);
+    // The manifest certifies the inputs the producer saw. If it (or anything else) edited a
+    // declared input while running, the measurement belongs to neither version of the tree.
+    let input_files = fingerprint_producer_inputs(workspace_root, prod_decl)?;
+    if input_files != input_files_before {
+        let changed: Vec<&String> = input_files
+            .keys()
+            .chain(input_files_before.keys())
+            .filter(|k| input_files.get(*k) != input_files_before.get(*k))
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .collect();
+        bail!(
+            "Declared inputs of producer `{producer_id}` changed while it ran ({}); no manifest written",
+            changed
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
-    let _ = fp_cache.save(workspace_root);
 
     let mut env = IndexMap::new();
     for var in &prod_decl.inputs.env {
@@ -541,6 +565,19 @@ pub fn execute_capture(
 
     let runs_dir = workspace_root.join(".claimwire/runs").join(producer_id);
     fs::create_dir_all(&runs_dir)?;
+
+    // Re-running a deterministic producer on unchanged inputs reproduces an existing manifest.
+    // Reuse it instead of minting `<id>-1`, `<id>-2`, ... copies of the same evidence.
+    if run_id_override.is_none() {
+        if let Some(existing) =
+            find_equivalent_run(&runs_dir, &input_set_digest, &families, &scalars, &env)
+        {
+            set_current_epoch(workspace_root, producer_id, &existing.run_id)?;
+            let rel = format!(".claimwire/runs/{producer_id}/{}.json", existing.run_id);
+            return Ok((existing, rel, true));
+        }
+    }
+
     let mut final_run_id = run_id.clone();
     let mut seq = 1usize;
     while runs_dir.join(format!("{final_run_id}.json")).exists() {
@@ -552,10 +589,11 @@ pub fn execute_capture(
         schema: "claimwire-run/v1".to_string(),
         run_id: final_run_id.clone(),
         producer: producer_id.to_string(),
-        timestamp: Some("2026-10-16T18:00:00Z".to_string()),
+        timestamp: Some(utc_now_rfc3339()),
         git_commit,
         git_dirty,
         hardware: Some(detect_hardware_summary()),
+        command: cmd_vec.to_vec(),
         environment: IndexMap::new(),
         input_set_digest,
         input_files,
@@ -567,16 +605,97 @@ pub fn execute_capture(
 
     let manifest_rel = format!(".claimwire/runs/{producer_id}/{final_run_id}.json");
     let manifest_path = workspace_root.join(&manifest_rel);
-    fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest)? + "\n",
+    )?;
 
-    // Atomically update `@current` in `.claimwire/evidence.yaml`
+    set_current_epoch(workspace_root, producer_id, &final_run_id)?;
+
+    Ok((manifest, manifest_rel, false))
+}
+
+fn fingerprint_producer_inputs(
+    workspace_root: &Path,
+    prod_decl: &ProducerDecl,
+) -> Result<IndexMap<String, String>> {
+    let (mut fp_cache, cache_mtime_ns) = FingerprintCache::load(workspace_root);
+    let rel_files = expand_input_globs(workspace_root, &prod_decl.inputs.files)?;
+    let mut input_files = IndexMap::new();
+    for rel_path in &rel_files {
+        let (digest, _) = fp_cache.fingerprint_file(workspace_root, rel_path, cache_mtime_ns)?;
+        input_files.insert(rel_path.clone(), digest);
+    }
+    let _ = fp_cache.save(workspace_root);
+    Ok(input_files)
+}
+
+fn find_equivalent_run(
+    runs_dir: &Path,
+    input_set_digest: &str,
+    families: &IndexMap<String, Vec<EvidenceRecord>>,
+    scalars: &IndexMap<String, CanonicalValue>,
+    env: &IndexMap<String, String>,
+) -> Option<RunManifest> {
+    let mut entries: Vec<_> = fs::read_dir(runs_dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    entries.sort();
+    entries.into_iter().find_map(|path| {
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            return None;
+        }
+        let mut m: RunManifest = serde_json::from_str(&fs::read_to_string(&path).ok()?).ok()?;
+        m.normalize();
+        (m.input_set_digest == input_set_digest
+            && &m.families == families
+            && &m.scalars == scalars
+            && &m.env == env)
+            .then_some(m)
+    })
+}
+
+/// Point `@current` of `producer_id` at `run_id` in `.claimwire/evidence.yaml`.
+fn set_current_epoch(workspace_root: &Path, producer_id: &str, run_id: &str) -> Result<()> {
     let ev_yaml_path = workspace_root.join(".claimwire/evidence.yaml");
-    if let Ok(ev_text) = fs::read_to_string(&ev_yaml_path) {
-        let updated = update_current_epoch_in_yaml(&ev_text, producer_id, &final_run_id);
+    let ev_text = fs::read_to_string(&ev_yaml_path)
+        .with_context(|| format!("Failed to read `{}`", ev_yaml_path.display()))?;
+    let Some(updated) = update_current_epoch_in_yaml(&ev_text, producer_id, run_id) else {
+        bail!(
+            "Could not find `epochs:` → `current:` under producer `{producer_id}` in `.claimwire/evidence.yaml`; add `epochs: {{ current: {run_id} }}` as a block mapping"
+        );
+    };
+    if updated != ev_text {
         fs::write(&ev_yaml_path, updated)?;
     }
+    Ok(())
+}
 
-    Ok((manifest, manifest_rel))
+/// Current UTC time as RFC 3339 (`2026-10-16T14:47:03Z`).
+fn utc_now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // Civil-from-days (Howard Hinnant), proleptic Gregorian calendar.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 fn detect_git_state(workspace_root: &Path) -> (String, bool) {
@@ -617,11 +736,16 @@ fn detect_hardware_summary() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-fn update_current_epoch_in_yaml(yaml_text: &str, producer_id: &str, new_run_id: &str) -> String {
+fn update_current_epoch_in_yaml(
+    yaml_text: &str,
+    producer_id: &str,
+    new_run_id: &str,
+) -> Option<String> {
     let mut lines: Vec<String> = yaml_text.lines().map(|l| l.to_string()).collect();
     let mut in_producer = false;
     let mut in_epochs = false;
     let mut prod_indent = 0usize;
+    let mut updated = false;
 
     for line in &mut lines {
         let trimmed = line.trim();
@@ -646,13 +770,17 @@ fn update_current_epoch_in_yaml(yaml_text: &str, producer_id: &str, new_run_id: 
         if in_producer && in_epochs && trimmed.starts_with("current:") {
             let prefix_ws = &line[..indent];
             *line = format!("{prefix_ws}current: {new_run_id}");
+            updated = true;
             break;
         }
     }
 
+    if !updated {
+        return None;
+    }
     let mut out = lines.join("\n");
     if yaml_text.ends_with('\n') {
         out.push('\n');
     }
-    out
+    Some(out)
 }

@@ -66,7 +66,7 @@ pub fn evaluate_all(
                             )
                         });
                         let mut diag = Diagnostic::error(DiagnosticCode::CW3002, msg)
-                            .with_location(".claimwire/claims.yaml", 1, 1)
+                            .with_config_path(".claimwire/claims.yaml", &["assertions", a_name])
                             .with_note(format!("predicate: {}", a_decl.expr));
                         // Include concrete values of referenced claims in notes
                         let mut ref_notes = Vec::new();
@@ -137,11 +137,7 @@ fn evaluate_channel(
         let mut epoch_records_map: IndexMap<String, Vec<EvaluatedRecord>> = IndexMap::new();
         if let Some(prod_epochs) = evidence.manifests.get(&fam_decl.producer) {
             for (epoch_name, manifest) in prod_epochs {
-                let raw_records = manifest
-                    .families
-                    .get(fam_name)
-                    .cloned()
-                    .unwrap_or_default();
+                let raw_records = manifest.families.get(fam_name).cloned().unwrap_or_default();
                 let mut eval_records = Vec::with_capacity(raw_records.len());
 
                 for raw_rec in &raw_records {
@@ -163,8 +159,13 @@ fn evaluate_channel(
                             .cloned()
                             .unwrap_or(CanonicalValue::Null);
                         let effective_val = if hold_record {
-                            let canonical_key =
-                                make_family_claim_key(fam_name, epoch_name, &fam_decl.dimensions, &raw_rec.scope, m_name);
+                            let canonical_key = make_family_claim_key(
+                                fam_name,
+                                epoch_name,
+                                &fam_decl.dimensions,
+                                &raw_rec.scope,
+                                m_name,
+                            );
                             lockfile_for_deadband
                                 .and_then(|l| l.evaluated_claims.get(&canonical_key))
                                 .and_then(|lv| json_to_canonical(&lv.value))
@@ -329,10 +330,9 @@ fn evaluate_channel(
                                     c_name.clone(),
                                     (val.clone(), c_decl.value_type.clone(), None),
                                 );
-                                channel.flat_claims.insert(
-                                    c_name.clone(),
-                                    (val, c_decl.value_type.clone(), None),
-                                );
+                                channel
+                                    .flat_claims
+                                    .insert(c_name.clone(), (val, c_decl.value_type.clone(), None));
                             }
                             Err(d) => diagnostics.push(d),
                         }
@@ -630,7 +630,7 @@ pub fn eval_expr_in_channel(
                 BinOp::Eq => Ok((CanonicalValue::Bool(lval == rval), ValueType::Bool)),
                 BinOp::Ne => Ok((CanonicalValue::Bool(lval != rval), ValueType::Bool)),
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                    let ( Some(a), Some(b) ) = (lval.as_f64(), rval.as_f64()) else {
+                    let (Some(a), Some(b)) = (lval.as_f64(), rval.as_f64()) else {
                         return Err(Diagnostic::error(
                             DiagnosticCode::CW2001,
                             "Numeric comparison requires numeric values",
@@ -835,8 +835,13 @@ fn eval_reduction(
 
     let mut matched_nums = Vec::new();
     for rec in records {
-        if record_matches_selectors(&rec.scope, &target_fam.dimensions, &target.selectors, ctx, channel)
-        {
+        if record_matches_selectors(
+            &rec.scope,
+            &target_fam.dimensions,
+            &target.selectors,
+            ctx,
+            channel,
+        ) {
             // §4.4: Reductions skip records whose metric is `null` (sentinel rows such as `exact`).
             if let Some((CanonicalValue::Number(n), _)) = rec.values.get(&target.field) {
                 matched_nums.push(*n);

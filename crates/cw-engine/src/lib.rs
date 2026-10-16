@@ -19,7 +19,7 @@ pub use lockfile::{
 };
 pub use lower::{
     BoundLocation, LocationKind, LoweringResult, audit_locations, build_locked_locations,
-    discover_markdown_files, lower_workspace,
+    discover_markdown_files, list_workspace_markdown, lower_workspace,
 };
 pub use patch::{
     AdoptReport, CheckReport, ImpactLocation, ImpactReport, PatchedItem, SyncReport,

@@ -321,7 +321,9 @@ fn parse_block_mapping(lines: &[Line<'_>], pos: &mut usize, map_indent: usize) -
         if val_str.is_empty() {
             if *pos < lines.len() && lines[*pos].indent > map_indent {
                 let child_indent = lines[*pos].indent;
-                let child = parse_block(lines, pos, child_indent)?;
+                let mut child = parse_block(lines, pos, child_indent)?;
+                // A nested block is located by its key line, like inline values.
+                child.span = entry_span;
                 map.insert(key, child);
             } else {
                 map.insert(
@@ -451,7 +453,10 @@ fn parse_inline_value(s: &str, span: SourceSpan) -> Result<YamlNode> {
                 continue;
             }
             let Some((k, v)) = split_key_value(p_trim) else {
-                bail!("Invalid flow mapping entry `{p_trim}` at line {}", span.line);
+                bail!(
+                    "Invalid flow mapping entry `{p_trim}` at line {}",
+                    span.line
+                );
             };
             let key = unquote_str(k.trim())?;
             let val = parse_inline_value(v.trim(), span)?;
@@ -603,10 +608,7 @@ families:
         let node = parse_yaml(yaml).unwrap();
         let json = node.to_json_value();
         assert_eq!(json["schema"], "claimwire/v1");
-        assert_eq!(
-            json["aliases"]["workload"]["sha256"][0],
-            "sha256(\"abc\")"
-        );
+        assert_eq!(json["aliases"]["workload"]["sha256"][0], "sha256(\"abc\")");
         assert_eq!(
             json["constants"]["paper.t22.soundness_bits"]["type"],
             "Quantity<bits>"

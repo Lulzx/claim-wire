@@ -149,7 +149,11 @@ impl MarkdownDocument {
                                     "Empty lens identifier in `<!-- cw:table -->`",
                                 )
                                 .with_location(&file, line_slice.line_no, 1)
-                                .with_snippet(line_str, line_str.len(), "missing table lens id"),
+                                .with_snippet(
+                                    line_str,
+                                    line_str.len(),
+                                    "missing table lens id",
+                                ),
                             );
                             i += 1;
                             continue;
@@ -228,7 +232,11 @@ impl MarkdownDocument {
                                     "Empty lens identifier in `<!-- cw:block -->`",
                                 )
                                 .with_location(&file, line_slice.line_no, 1)
-                                .with_snippet(line_str, line_str.len(), "missing block lens id"),
+                                .with_snippet(
+                                    line_str,
+                                    line_str.len(),
+                                    "missing block lens id",
+                                ),
                             );
                             i += 1;
                             continue;
@@ -556,11 +564,7 @@ pub fn lex_gfm_row(
                 "Unescaped pipe (`|`) splits a code span in a GFM table row",
             )
             .with_location(file, row_slice.line_no, col_1)
-            .with_snippet(
-                raw_line,
-                1,
-                "pipe splits code span before closing backtick",
-            )
+            .with_snippet(raw_line, 1, "pipe splits code span before closing backtick")
             .with_help("escape the pipe as `\\|` so GitHub does not split the cell"),
         );
     }
@@ -699,7 +703,11 @@ fn scan_inline_spans_in_slice(
                             "Unclosed `<!--` in Claim Wire marker",
                         )
                         .with_location(file, line_no, col)
-                        .with_snippet(full_line_str, slice_end - comment_start, "unclosed comment"),
+                        .with_snippet(
+                            full_line_str,
+                            slice_end - comment_start,
+                            "unclosed comment",
+                        ),
                     );
                 }
                 break;
@@ -713,10 +721,16 @@ fn scan_inline_spans_in_slice(
                     diagnostics.push(
                         Diagnostic::error(
                             DiagnosticCode::CW1001,
-                            format!("Malformed closing tag `<!-- {inner} -->`: expected `<!-- /cw -->`"),
+                            format!(
+                                "Malformed closing tag `<!-- {inner} -->`: expected `<!-- /cw -->`"
+                            ),
                         )
                         .with_location(file, line_no, col)
-                        .with_snippet(full_line_str, comment_end - comment_start, "malformed closing tag"),
+                        .with_snippet(
+                            full_line_str,
+                            comment_end - comment_start,
+                            "malformed closing tag",
+                        ),
                     );
                 }
                 match open_span.take() {
@@ -768,12 +782,14 @@ fn scan_inline_spans_in_slice(
                 } else {
                     let raw_dir = after_cw.trim().to_string();
                     // Check for optional format specification separated by whitespace + `format=`
-                    let (ref_str, fmt_override) = if let Some((r, f)) = raw_dir.split_once(" format=") {
-                        let f_unquoted = crate::yaml::unquote_str(f.trim()).unwrap_or_else(|_| f.trim().to_string());
-                        (r.trim(), Some(f_unquoted))
-                    } else {
-                        (raw_dir.as_str(), None)
-                    };
+                    let (ref_str, fmt_override) =
+                        if let Some((r, f)) = raw_dir.split_once(" format=") {
+                            let f_unquoted = crate::yaml::unquote_str(f.trim())
+                                .unwrap_or_else(|_| f.trim().to_string());
+                            (r.trim(), Some(f_unquoted))
+                        } else {
+                            (raw_dir.as_str(), None)
+                        };
                     match ClaimRef::parse(ref_str) {
                         Ok(claim_ref) => {
                             open_span = Some((
@@ -818,12 +834,8 @@ fn scan_inline_spans_in_slice(
     }
 
     if !temp_spans.is_empty() {
-        let ctx_digest = compute_line_context_digest(
-            source,
-            slice_start,
-            slice_end,
-            &span_value_ranges_on_line,
-        );
+        let ctx_digest =
+            compute_line_context_digest(source, slice_start, slice_end, &span_value_ranges_on_line);
         for (val_start, val_end, raw_dir, claim_ref, fmt_override, occ) in temp_spans {
             let value_col = (val_start - line_start) + 1;
             spans_out.push(InlineSpanNode {
@@ -960,10 +972,7 @@ mod tests {
 
         let patched = apply_byte_patches(
             &doc.source,
-            vec![(
-                doc.inline_spans[0].value_range.clone(),
-                "227".to_string(),
-            )],
+            vec![(doc.inline_spans[0].value_range.clone(), "227".to_string())],
         );
         assert_eq!(
             patched,

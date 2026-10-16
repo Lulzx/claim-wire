@@ -183,10 +183,9 @@ pub fn compare_snapshots(old: &RevisionSnapshot, new: &RevisionSnapshot) -> Vec<
                 old.manifests.get(&new_fam.producer),
                 new.manifests.get(&new_fam.producer),
             ) {
-                if let (Some(old_recs), Some(new_recs)) = (
-                    old_m.families.get(fam_name),
-                    new_m.families.get(fam_name),
-                ) {
+                if let (Some(old_recs), Some(new_recs)) =
+                    (old_m.families.get(fam_name), new_m.families.get(fam_name))
+                {
                     let old_scopes: Vec<Vec<String>> = old_recs
                         .iter()
                         .map(|r| r.scope_vec(&new_fam.dimensions))

@@ -11,6 +11,6 @@ pub use schema::{
     parse_deadband,
 };
 pub use typecheck::{
-    CheckedIr, check_binary_op_types, check_claims_config, infer_expr_type,
-    resolve_claim_ref_type, resolve_family_field_type, types_compatible,
+    CheckedIr, check_binary_op_types, check_claims_config, infer_expr_type, resolve_claim_ref_type,
+    resolve_family_field_type, types_compatible,
 };

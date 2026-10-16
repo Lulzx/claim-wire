@@ -102,10 +102,7 @@ fn dispatch(args: &[String]) -> Result<u8> {
         "merge-driver" => return cmd_merge_driver(sub_args),
         "completions" => return cmd_completions(sub_args),
         "init" => {
-            let target = opts
-                .explicit_dir
-                .clone()
-                .unwrap_or(env::current_dir()?);
+            let target = opts.explicit_dir.clone().unwrap_or(env::current_dir()?);
             return cmd_init(&target, sub_args, &s);
         }
         "explain" => {
@@ -186,8 +183,12 @@ fn extract_global_opts(args: &[String]) -> Result<(GlobalOpts, Vec<String>)> {
                 if i + 1 >= args.len() {
                     anyhow::bail!("Missing argument after `--color` (expected auto|always|never)");
                 }
-                color = ColorChoice::parse(&args[i + 1])
-                    .ok_or_else(|| anyhow::anyhow!("Invalid `--color` value `{}` (expected auto|always|never)", args[i + 1]))?;
+                color = ColorChoice::parse(&args[i + 1]).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Invalid `--color` value `{}` (expected auto|always|never)",
+                        args[i + 1]
+                    )
+                })?;
                 if color == ColorChoice::Always && anim == AnimChoice::Auto {
                     anim = AnimChoice::Always;
                 } else if color == ColorChoice::Never {
@@ -197,8 +198,9 @@ fn extract_global_opts(args: &[String]) -> Result<(GlobalOpts, Vec<String>)> {
             }
             arg if arg.starts_with("--color=") => {
                 let val = &arg["--color=".len()..];
-                color = ColorChoice::parse(val)
-                    .ok_or_else(|| anyhow::anyhow!("Invalid `--color` value `{val}` (expected auto|always|never)"))?;
+                color = ColorChoice::parse(val).ok_or_else(|| {
+                    anyhow::anyhow!("Invalid `--color` value `{val}` (expected auto|always|never)")
+                })?;
                 if color == ColorChoice::Always && anim == AnimChoice::Auto {
                     anim = AnimChoice::Always;
                 } else if color == ColorChoice::Never {
@@ -421,6 +423,15 @@ fn cmd_sync(workspace_root: &Path, args: &[String], s: &Styler, quiet: bool) -> 
             );
         }
 
+        let prune_verb = if dry_run { "would prune" } else { "pruned" };
+        for id in &report.pruned_locations {
+            println!(
+                "{prune_verb}   {}   {}",
+                s.cyan_bold(id),
+                s.dim("(binding no longer in Markdown; removed from lockfile)")
+            );
+        }
+
         if show_diff && !report.file_diffs.is_empty() {
             println!();
             for (rel_path, (before, after)) in &report.file_diffs {
@@ -528,7 +539,9 @@ fn cmd_capture(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
                 break;
             }
             other => {
-                anyhow::bail!("Unexpected argument `{other}` in `cw capture` (run `cw capture --help`)")
+                anyhow::bail!(
+                    "Unexpected argument `{other}` in `cw capture` (run `cw capture --help`)"
+                )
             }
         }
     }
@@ -569,15 +582,15 @@ fn cmd_capture(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
         }
         sp.stop_and_clear();
     }
-    let (manifest, manifest_rel) = capture_res?;
+    let (manifest, manifest_rel, reused) = capture_res?;
 
     let fam_counts: Vec<String> = manifest
         .families
         .iter()
         .map(|(k, v)| format!("{} {k}", v.len()))
         .collect();
-    let total_records: usize = manifest.families.values().map(|v| v.len()).sum::<usize>()
-        + manifest.scalars.len();
+    let total_records: usize =
+        manifest.families.values().map(|v| v.len()).sum::<usize>() + manifest.scalars.len();
     let summary = if fam_counts.is_empty() {
         format!("{} scalar metrics", manifest.scalars.len())
     } else {
@@ -589,6 +602,20 @@ fn cmd_capture(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
     } else {
         "captured".to_string()
     };
+    if reused {
+        let badge = if s.is_colored() {
+            s.badge_ok("✓ UNCHANGED")
+        } else {
+            "unchanged".to_string()
+        };
+        println!(
+            "{badge} inputs and {} records match existing run → {}  {}",
+            s.green_bold(&total_records.to_string()),
+            s.cyan_bold(&manifest_rel),
+            s.dim(&format!("(@current · {elapsed_ms}ms)"))
+        );
+        return Ok(0);
+    }
     println!(
         "{badge} {} records ({summary}) → {}  {}",
         s.green_bold(&total_records.to_string()),
@@ -671,36 +698,48 @@ fn cmd_impact(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8> 
     if s.is_colored() {
         println!(
             "{}",
-            s.banner("Forward Invalidation & Impact Trace", &workspace_root.display().to_string())
+            s.banner(
+                "Forward Invalidation & Impact Trace",
+                &workspace_root.display().to_string()
+            )
         );
     }
+    let list = |items: &[String]| {
+        if items.is_empty() {
+            s.dim("none")
+        } else {
+            items.join(", ")
+        }
+    };
     println!(
-        "{} {:?}",
+        "{} {}",
         s.cyan_bold("╭─▸ Modified inputs:"),
-        report.modified_files
+        list(&report.modified_files)
     );
     println!(
-        "{} {:?}",
+        "{} {}",
         s.yellow_bold("├─▸ Stale producers:"),
-        report.stale_producers
+        list(&report.stale_producers)
     );
-    println!(
-        "{} {:?}",
-        s.magenta_bold("├─▸ Affected claim families:"),
-        report.affected_families
-    );
+    if !report.affected_families.is_empty() {
+        println!(
+            "{} {}",
+            s.magenta_bold("├─▸ Affected claim families:"),
+            list(&report.affected_families)
+        );
+    }
     if !report.affected_scalar_claims.is_empty() {
         println!(
-            "{} {:?}",
+            "{} {}",
             s.cyan_bold("├─▸ Affected scalar claims:"),
-            report.affected_scalar_claims
+            list(&report.affected_scalar_claims)
         );
     }
     if !report.affected_assertions.is_empty() {
         println!(
-            "{} {:?}",
+            "{} {}",
             s.red_bold("├─▸ Affected assertions:"),
-            report.affected_assertions
+            list(&report.affected_assertions)
         );
     }
     println!(
@@ -748,11 +787,7 @@ fn cmd_explain(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
             if idx == 0 {
                 println!("  {} {}", s.badge_info("TARGET"), s.brand_gradient(line));
             } else if let Some((prefix, rest)) = line.split_once(": ") {
-                println!(
-                    "  {} {}",
-                    s.cyan_bold(&format!("{prefix}:")),
-                    s.bold(rest)
-                );
+                println!("  {} {}", s.cyan_bold(&format!("{prefix}:")), s.bold(rest));
             } else {
                 println!("  {}", s.green(line));
             }
@@ -847,11 +882,7 @@ fn cmd_merge_driver(args: &[String]) -> Result<u8> {
         Path::new(&args[1]),
         Path::new(&args[2]),
     )?;
-    if ok {
-        Ok(0)
-    } else {
-        Ok(1)
-    }
+    if ok { Ok(0) } else { Ok(1) }
 }
 
 fn print_diagnostics(
@@ -872,19 +903,26 @@ fn print_diagnostics(
                     .filter(|d| d.severity == Severity::Error)
                     .count();
                 if err_count > 0 {
-                    let count_to_report = failed.max(err_count);
-                    let passed = total.saturating_sub(count_to_report);
+                    // Errors and failed locations are different counts: a deleted directive is one
+                    // error and zero failed locations (its locations are simply gone).
+                    let passed = total.saturating_sub(failed);
+                    let errors = if err_count == 1 {
+                        "1 error".to_string()
+                    } else {
+                        format!("{err_count} errors")
+                    };
                     if s.is_colored() {
                         println!(
-                            "{} {} {} of {} registered locations failed verification",
+                            "{} {} {} · {} of {} registered locations failed verification",
                             s.badge_err("✗ FAILED"),
                             s.progress_bar(passed, total.max(1), 16),
-                            s.red_bold(&count_to_report.to_string()),
+                            s.red_bold(&errors),
+                            s.red_bold(&failed.to_string()),
                             s.bold(&total.to_string())
                         );
                     } else {
                         println!(
-                            "error: {count_to_report} of {total} registered locations failed verification"
+                            "error: {errors} · {failed} of {total} registered locations failed verification"
                         );
                     }
                 } else {
@@ -897,9 +935,7 @@ fn print_diagnostics(
                             s.bold(&total.to_string())
                         );
                     } else {
-                        println!(
-                            "ok: {total} of {total} registered locations verified · 0 errors"
-                        );
+                        println!("ok: {total} of {total} registered locations verified · 0 errors");
                     }
                     println!(
                         "{} Unregistered prose outside Claim Wire spans, tables, and blocks was not assessed.",
@@ -1013,7 +1049,10 @@ fn print_help(s: &Styler) {
     );
     println!();
 
-    println!("{}", s.brand_gradient("◈ PROVENANCE, IMPACT & GIT GOVERNANCE"));
+    println!(
+        "{}",
+        s.brand_gradient("◈ PROVENANCE, IMPACT & GIT GOVERNANCE")
+    );
     println!(
         "    {:<38} Trace changed source files forward to affected producers, claims, and docs",
         s.magenta_bold("impact [<path...> | --git-diff <rev>]")
@@ -1037,11 +1076,19 @@ fn print_help(s: &Styler) {
     println!();
 
     println!("{}", s.brand_gradient("◈ GLOBAL OPTIONS"));
-    println!("    -C, --dir <PATH>               Run as if cw was started in <PATH> (otherwise walks up to find .claimwire/)");
-    println!("    --color <auto|always|never>    Control TrueColor/ANSI terminal styling (respects NO_COLOR)");
-    println!("    --animate / --no-anim          Force-enable or disable terminal animations & spinners");
+    println!(
+        "    -C, --dir <PATH>               Run as if cw was started in <PATH> (otherwise walks up to find .claimwire/)"
+    );
+    println!(
+        "    --color <auto|always|never>    Control TrueColor/ANSI terminal styling (respects NO_COLOR)"
+    );
+    println!(
+        "    --animate / --no-anim          Force-enable or disable terminal animations & spinners"
+    );
     println!("    -q, --quiet                    Suppress informational output on check/sync");
-    println!("    -h, --help                     Print help (use `cw <command> --help` for detailed subcommand help)");
+    println!(
+        "    -h, --help                     Print help (use `cw <command> --help` for detailed subcommand help)"
+    );
     println!("    -V, --version                  Print version");
 }
 
@@ -1088,7 +1135,7 @@ fn print_subcommand_help(subcmd: &str, s: &Styler) -> Result<u8> {
         }
         "sync" => {
             println!(
-                "{} — Re-evaluate claims and transactionally patch owned spans, cells, and blocks\n\n{}\n    cw sync [OPTIONS]\n\n{}\n    -n, --dry-run          Preview all Markdown patches without modifying files or lockfile\n    -d, --diff             Display a unified diff of all patched Markdown lines\n    --exact                Require rendered text to match canonical formatted string even within tolerance\n    --force                Overwrite target locations even on manual conflict (CW3004)\n    --ack-context          Record current adjacent prose context hashes in evidence.lock.json (clears CW4002)\n    -D, --deny-warnings    Fail with exit code 1 if any warnings remain\n",
+                "{} — Re-evaluate claims and transactionally patch owned spans, cells, and blocks\n\n{}\n    cw sync [OPTIONS]\n\n{}\n    -n, --dry-run          Preview all Markdown patches without modifying files or lockfile\n    -d, --diff             Display a unified diff of all patched Markdown lines\n    --exact                Require rendered text to match canonical formatted string even within tolerance\n    --force                Overwrite target locations even on manual conflict (CW4001)\n    --ack-context          Record current adjacent prose context hashes in evidence.lock.json (clears CW4002)\n    -D, --deny-warnings    Fail with exit code 1 if any warnings remain\n",
                 s.bold("cw sync"),
                 s.bold("USAGE:"),
                 s.bold("OPTIONS:")
@@ -1103,7 +1150,7 @@ fn print_subcommand_help(subcmd: &str, s: &Styler) -> Result<u8> {
         }
         "capture" => {
             println!(
-                "{} — Execute a producer harness, ingest `@cw:record` frames, and write a run manifest\n\n{}\n    cw capture --producer <ID> [--run-id <RUN_ID>] -- <COMMAND...>\n\n{}\n    -p, --producer <ID>    Producer ID declared in `.claimwire/evidence.yaml`\n    --run-id <RUN_ID>      Deterministic run identifier (defaults to timestamp + git SHA)\n\n{}\n    cw capture --producer bench_throughput -- cargo bench --bench magnetar\n",
+                "{} — Execute a producer harness, ingest `@cw:record` frames, and write a run manifest\n\n{}\n    cw capture --producer <ID> [--run-id <RUN_ID>] [-- <COMMAND...>]\n\n{}\n    -p, --producer <ID>    Producer ID declared in `.claimwire/evidence.yaml`\n    --run-id <RUN_ID>      Run identifier (defaults to `<producer>-<input digest prefix>`)\n    -- <COMMAND...>        Command to run instead of the producer's declared `command`\n\n    Re-running on unchanged inputs that emits identical records reuses the existing run.\n\n{}\n    cw capture --producer bench_throughput\n    cw capture --producer bench_throughput -- cargo bench --bench magnetar\n",
                 s.bold("cw capture"),
                 s.bold("USAGE:"),
                 s.bold("OPTIONS:"),
@@ -1229,7 +1276,14 @@ mod tests {
         assert_eq!(code, 0);
 
         // list
-        for topic in ["all", "producers", "families", "claims", "assertions", "locations"] {
+        for topic in [
+            "all",
+            "producers",
+            "families",
+            "claims",
+            "assertions",
+            "locations",
+        ] {
             let code = dispatch(&[
                 "--color".into(),
                 "never".into(),

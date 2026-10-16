@@ -133,7 +133,11 @@ impl FamilyRef {
     }
 
     pub fn canonical_string(&self) -> String {
-        let sels: Vec<String> = self.selectors.iter().map(|s| s.canonical_string()).collect();
+        let sels: Vec<String> = self
+            .selectors
+            .iter()
+            .map(|s| s.canonical_string())
+            .collect();
         match &self.epoch {
             Some(ep) if ep != "current" => {
                 format!("{}@{}[{}].{}", self.family, ep, sels.join(", "), self.field)
@@ -207,7 +211,10 @@ impl ClaimRef {
             for seg in &segments {
                 validate_identifier(seg, "scalar identifier segment")?;
             }
-            if matches!(segments.first().map(|x| x.as_str()), Some("table" | "block")) {
+            if matches!(
+                segments.first().map(|x| x.as_str()),
+                Some("table" | "block")
+            ) {
                 return Err(Diagnostic::error(
                     DiagnosticCode::CW1001,
                     format!(
@@ -412,7 +419,9 @@ pub fn parse_selector_key(s: &str) -> Result<SelectorKey, Diagnostic> {
     if SelectorKey::needs_quotes(s) {
         return Err(Diagnostic::error(
             DiagnosticCode::CW1001,
-            format!("Selector key `{s}` contains special characters and must be quoted as `\"{s}\"`"),
+            format!(
+                "Selector key `{s}` contains special characters and must be quoted as `\"{s}\"`"
+            ),
         ));
     }
     Ok(SelectorKey {
@@ -443,7 +452,9 @@ pub fn parse_row_override_key(raw: &str) -> Vec<String> {
         .map(|part| {
             let p = part.trim();
             if p.starts_with('"') && p.ends_with('"') && p.len() >= 2 {
-                p[1..p.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\")
+                p[1..p.len() - 1]
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\")
             } else {
                 p.to_string()
             }

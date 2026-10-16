@@ -519,14 +519,12 @@ mod tests {
     #[test]
     fn test_parse_expressions() {
         assert!(parse_expr("cycles / prove_wall").is_ok());
-        assert!(
-            parse_expr("guest_bench@initial[workload, test].prove_wall / prove_wall").is_ok()
-        );
+        assert!(parse_expr("guest_bench@initial[workload, test].prove_wall / prove_wall").is_ok());
         assert!(parse_expr("duration / sum(phase_bench[*].duration)").is_ok());
-        assert!(parse_expr(
-            "sum(phase_bench[{register_twist, ram_twist, bytecode_shout}].duration)"
-        )
-        .is_ok());
+        assert!(
+            parse_expr("sum(phase_bench[{register_twist, ram_twist, bytecode_shout}].duration)")
+                .is_ok()
+        );
         assert!(
             parse_expr("min(soundness_ledger[*].per_round_bits) >= paper.t22.soundness_bits")
                 .is_ok()
