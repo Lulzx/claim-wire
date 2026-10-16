@@ -1,0 +1,389 @@
+schema: claimwire/v1
+
+aliases:
+  workload:
+    "fib(19)":        ["fibonacci, fib(19) = 4181"]
+    'sha256("abc")':  ['sha256("abc")', 'sha256 of "abc"']
+  phase:
+    "packed_witness":      ["packed witness"]
+    "component_witnesses": ["component witnesses"]
+    "build_g":             ["build G"]
+    "virtual_spartan":     ["Virtual Spartan"]
+    "register_twist":      ["register Twist"]
+    "ram_twist":           ["RAM Twist"]
+    "bytecode_shout":      ["bytecode Shout"]
+    "mosaic_batch":        ["Mosaic batch"]
+    "ligerito_open":       ["ring switching + Ligerito open"]
+  case:
+    "empty":     ["Empty message"]
+    "abc":       ["abc"]
+    "message56": ["Standard 56-byte message"]
+
+constants:
+  paper.t22.proof_size_max: { type: Bytes, value: "599 KiB" }
+  paper.t22.verify_ms:      { type: Duration, value: "13 ms" }
+  paper.t22.soundness_bits: { type: Quantity<bits>, value: "120.0 bits" }
+
+families:
+  guest_bench:
+    producer: om.benchmarks
+    dimensions: [workload, profile]
+    metrics:
+      cycles:      { type: Cycles,   format: "{:,}" }
+      prove_wall:  { type: Duration, format: "{:.2f s}", deadband: 2.5% }
+      prove_cpu:   { type: Duration, format: "{:.1f s}", deadband: 2.5% }
+      peak_rss:    { type: Bytes,    format: "{:auto_iec}", deadband: 2.0% }
+      heap_peak:   { type: Bytes,    format: "{:auto_iec}", deadband: 2.0% }
+      verify_wall: { type: Duration, format: "{:.0f ms}", deadband: 5.0% }
+      verify_cpu:  { type: Duration, format: "{:.0f ms}", deadband: 5.0% }
+      verify_rss:  { type: Bytes,    format: "{:.1f MiB}", deadband: 2.0% }
+      proof_size:  { type: Bytes,    format: "{:, B}" }
+    derivations:
+      throughput:
+        type: Throughput
+        expr: "cycles / prove_wall"
+        format: "~{:.0fk cycles/s}"
+      speedup_vs_initial:
+        type: Ratio
+        expr: "guest_bench@initial[workload, test].prove_wall / prove_wall"
+        format: "{:.1f×}"
+      paper_size_gap:
+        type: Bytes
+        expr: "paper.t22.proof_size_max - proof_size"
+        format: "~{:.0f KiB}"
+
+  phase_bench:
+    producer: om.benchmarks
+    dimensions: [phase]
+    metrics:
+      duration:  { type: Duration, format: "{:.2f s}", deadband: 2.5% }
+      heap_peak: { type: Bytes,    format: "{:.1f GiB}", deadband: 2.0% }
+    derivations:
+      ends_at:
+        type: Duration
+        expr: "prefix_sum(duration)"
+        format: "{:.2f s}"
+      share_of_total:
+        type: Ratio
+        expr: "duration / sum(phase_bench[*].duration)"
+        format: "{:.0f%}"
+      speedup_vs_prev:
+        type: Ratio
+        expr: "phase_bench@prev[phase].duration / duration"
+        format: "{:.2f×}"
+
+  validation_vec:
+    producer: om.validation
+    dimensions: [case]
+    dimension_aliases:
+      case:
+        empty: ["Empty message"]
+        abc: ["abc"]
+        message56: ["Standard 56-byte message"]
+    metrics:
+      input_bytes:    { type: Count,    format: "{:,}" }
+      cycles:         { type: Cycles,   format: "{:,}" }
+      proof_bytes:    { type: Count,    format: "{:,}" }
+      output_matches: { type: Bool,     format: "{:Yes|No}" }
+      verified:       { type: Bool,     format: "{:Accepted|Rejected}" }
+
+  soundness_ledger:
+    producer: om.soundness
+    dimensions: [row]
+    metrics:
+      per_round_bits:       { type: Quantity<bits>, format: "{:.1f bits}" }
+      reduction_total_bits: { type: Quantity<bits>, format: "{:.1f bits}" }
+
+claims:
+  inventory.rust_crates:      { kind: source, producer: om.inventory, metric: rust_crates, type: Count }
+  inventory.vector_files:     { kind: source, producer: om.inventory, metric: vector_files, type: Count }
+  inventory.table1_workloads: { kind: source, producer: om.inventory, metric: table1_workloads, type: Count }
+  inventory.table1_proved:    { kind: source, producer: om.inventory, metric: table1_proved, type: Count }
+  inventory.rust_tests:       { kind: source, producer: om.inventory, metric: rust_tests, type: Count }
+  inventory.python_tests:     { kind: source, producer: om.inventory, metric: python_tests, type: Count }
+  inventory.isa_tests:        { kind: source, producer: om.inventory, metric: isa_tests, type: Count }
+  inventory.oracle_cases:     { kind: source, producer: om.inventory, metric: oracle_cases, type: Count }
+
+  # Grouped phase derivations for BENCHMARKS.md Breakdown of Prover Wall Time table
+  phase_bench.total_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench[*].duration)"
+    format: "{:.2f s}"
+  phase_bench.prev_total_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench@prev[*].duration)"
+    format: "{:.2f s}"
+  phase_bench.twist_shout_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench[{register_twist, ram_twist, bytecode_shout}].duration)"
+    format: "{:.2f s}"
+  phase_bench.twist_shout_prev_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench@prev[{register_twist, ram_twist, bytecode_shout}].duration)"
+    format: "{:.2f s}"
+  phase_bench.twist_shout_share:
+    kind: derive
+    type: Ratio
+    expr: "phase_bench.twist_shout_wall / phase_bench.total_wall"
+    format: "{:.0f%}"
+  phase_bench.twist_shout_speedup:
+    kind: derive
+    type: Ratio
+    expr: "phase_bench.twist_shout_prev_wall / phase_bench.twist_shout_wall"
+    format: "{:.2f×}"
+
+  phase_bench.exec_witness_routers_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench[{execute, packed_witness, component_witnesses, build_g, routers}].duration)"
+    format: "{:.2f s}"
+  phase_bench.exec_witness_routers_prev_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench@prev[{execute, packed_witness, component_witnesses, build_g, routers}].duration)"
+    format: "{:.2f s}"
+  phase_bench.exec_witness_routers_share:
+    kind: derive
+    type: Ratio
+    expr: "phase_bench.exec_witness_routers_wall / phase_bench.total_wall"
+    format: "{:.0f%}"
+  phase_bench.exec_witness_routers_speedup:
+    kind: derive
+    type: Ratio
+    expr: "phase_bench.exec_witness_routers_prev_wall / phase_bench.exec_witness_routers_wall"
+    format: "~{:.1f×}"
+  phase_bench.witness_pack_g_wall:
+    kind: derive
+    type: Duration
+    expr: "sum(phase_bench[{packed_witness, component_witnesses, build_g}].duration)"
+    format: "{:.2f s}"
+
+assertions:
+  check.rs_faster_than_initial:
+    expr: "guest_bench[radix-sort-u64, test].speedup_vs_initial > 1.0"
+  check.proof_ahead_of_paper:
+    expr: "guest_bench[radix-sort-u64, provable-120].proof_size <= paper.t22.proof_size_max"
+  check.soundness_120:
+    expr: "min(soundness_ledger[*].per_round_bits) >= paper.t22.soundness_bits"
+
+blocks:
+  readme.test_suite_comment:
+    file: README.md
+    lines:
+      - "# Run Rust, Python, and RV64I conformance + fuzz suites ({inventory.rust_tests} Rust, {inventory.python_tests} Python, {inventory.isa_tests} ISA tests)"
+
+tables:
+  readme.benchmarks:
+    file: README.md
+    mode: records
+    family: guest_bench
+    key_columns: { Guest: workload, Profile: profile }
+    columns:
+      "Cycles (`T`)": "{cycles:pow2}"
+      "Prove": "{prove_wall:.2f s}"
+      "Peak RSS": "{peak_rss:auto_iec}"
+      "Verify": "{verify_wall:.0f ms}"
+      "Proof Size": "{proof_size:, B}"
+    row_overrides:
+      "[radix-sort-u64, test]":
+        "Verify": "{verify_wall:.0f ms} ({verify_rss:.0f MiB})"
+      "[radix-sort-u64, provable-120]":
+        "Verify": "{verify_wall:.0f ms} ({verify_rss:.0f MiB})"
+        "Proof Size": "{proof_size:, B} ({proof_size:.1f KiB})"
+
+  bench.e2e_guests:
+    file: docs/BENCHMARKS.md
+    mode: records
+    family: guest_bench
+    key_columns: { Guest: workload, Profile: profile }
+    columns:
+      "T (cycles)": "{cycles:,}"
+      "Prove": "{prove_wall:.2f s}"
+      "Verify": "{verify_wall:.0f ms}"
+      "Proof size": "{proof_size:, B}"
+
+  bench.table1_more:
+    file: docs/BENCHMARKS.md
+    mode: records
+    family: guest_bench
+    key_columns: { Guest: workload }
+    default_scope: { profile: test }
+    columns:
+      "T (cycles)": "{cycles:,}"
+      "Proof size": "{proof_size:, B}"
+
+  bench.sparse_twist:
+    file: docs/BENCHMARKS.md
+    mode: records
+    family: guest_bench
+    key_columns: { Guest: workload }
+    default_scope: { profile: test }
+    sentinels: ["—", "N/A", "under 5 min (not timed)"]
+    columns:
+      "T (cycles)": "{cycles:,}"
+      "Prove": "{prove_wall:.1f s}"
+      "Proof size": "{proof_size:, B}"
+    row_overrides:
+      "[keccak-f1600, test]":
+        "Prove": "18.8 s (now {prove_wall:.2f s})"
+
+  bench.radix_sort_deep_dive:
+    file: docs/BENCHMARKS.md
+    mode: transposed
+    key_column: Quantity
+    column_scopes:
+      "`provable-120` (`t = 177, gs = 2`)": { family: guest_bench, epoch: current, scope: [radix-sort-u64, provable-120] }
+      "`test` (`t = 8`)":                   { family: guest_bench, epoch: current, scope: [radix-sort-u64, test] }
+      "Initial `test` baseline":            { family: guest_bench, epoch: initial, scope: [radix-sort-u64, test] }
+    rows:
+      "T (cycles, padded)": "{cycles:,}"
+      "Prove (wall)":       "**{prove_wall:.2f s}** (≈ {throughput:.0f k cycles/s}; {prove_cpu:.1f s} CPU)"
+      "Peak memory":        "{peak_rss:.1f GiB} footprint ({heap_peak:.1f GiB} heap peak)"
+      "Verify":             "{verify_wall:.0f ms} wall, {verify_cpu:.0f ms} CPU, {verify_rss:.1f MiB} RSS"
+      "Proof size":         "{proof_size:, B}"
+    column_overrides:
+      "`provable-120` (`t = 177, gs = 2`)":
+        "Proof size":   "{proof_size:, B} ({proof_size:.1f KiB})"
+      "Initial `test` baseline":
+        "Prove (wall)": "{prove_wall:.0f s} (≈ {throughput:.0f k cycles/s}; {prove_cpu:.0f s} CPU)"
+        "Peak memory":  "{peak_rss:.1f GiB} ({heap_peak:.1f GiB} heap peak)"
+        "Verify":       "{verify_wall:.2f s} wall, {verify_rss:.0f MiB} RSS"
+
+  bench.phase_trace:
+    file: docs/BENCHMARKS.md
+    mode: records
+    family: phase_bench
+    key_columns: { Phase: phase }
+    columns:
+      "Ends at":                   "{ends_at:.2f s}"
+      "Phase duration":            "{duration:.2f s}"
+      "Heap peak":                 "{heap_peak:.1f GiB}"
+      "Previous (`provable-120`)": "{@prev.ends_at:.2f s} ({@prev.duration:.2f s})"
+      "Initial (`test`)":          "{@initial.ends_at:.1f s} ({@initial.duration:.1f s})"
+    row_overrides:
+      "[execute]":
+        "Heap peak": "{heap_peak:.1f GiB} (the trace)"
+      "[commit]":
+        "Initial (`test`)": "{@initial.ends_at:.1f s} ({@initial.duration:.1f s}, {@initial.heap_peak:.1f GiB})"
+      "[ligerito_open]":
+        "Initial (`test`)": "{@initial.ends_at:.1f s} ({@initial.duration:.1f s}, {@initial.heap_peak:.1f GiB})"
+
+  bench.smaller_workloads:
+    file: docs/BENCHMARKS.md
+    mode: records
+    family: guest_bench
+    key_columns: { Guest: workload, Profile: profile }
+    sentinels: ["—", "N/A"]
+    columns:
+      "T":          "{cycles:,}"
+      "Previous":   "{@prev.prove_wall:.2f s}"
+      "Prove now":  "{prove_wall:.2f s}"
+      "Proof size": "{proof_size:, B}"
+
+  bench.test_suites:
+    file: docs/BENCHMARKS.md
+    mode: checklist
+    key_column: Suite
+    rows:
+      "Rust workspace":
+        "Count": "{inventory.rust_tests} tests, 0 failures"
+      "Python reference":
+        "Count": "{inventory.python_tests} tests, 0 failures"
+      "RV64I conformance runner":
+        "Count": "{inventory.isa_tests} programs (all 40 RV64I instructions), 0 failures"
+      "Guest oracle executions":
+        "Count": "{inventory.oracle_cases} cases, all pass"
+
+  bench.proof_size_model:
+    file: docs/BENCHMARKS.md
+    mode: checklist
+    key_column: "`n_pack`"
+    sentinels: ["—", "N/A"]
+    rows:
+      "26":
+        "Measured whole proof (`provable-120`)": "**{guest_bench[radix-sort-u64, provable-120].proof_size:, B} ({guest_bench[radix-sort-u64, provable-120].proof_size:.1f KiB})**"
+
+  bench.paper_comparison:
+    file: docs/BENCHMARKS.md
+    mode: checklist
+    key_column: Metric
+    sentinels: ["—", "N/A", "N/A ($t = 8$)"]
+    rows:
+      "Proof size":
+        "`open-magnetar` (`provable-120`)": "**{guest_bench[radix-sort-u64, provable-120].proof_size:.1f KiB} ({guest_bench[radix-sort-u64, provable-120].proof_size:, B})**"
+        "`open-magnetar` (`test`)":         "**{guest_bench[radix-sort-u64, test].proof_size:.1f KiB} ({guest_bench[radix-sort-u64, test].proof_size:, B})**"
+        "Gap / Status":                     "**Ahead of paper** (~{guest_bench[radix-sort-u64, provable-120].paper_size_gap:.0f KiB} smaller than the paper's 599 KiB figure)"
+      "Verifier time":
+        "`open-magnetar` (`provable-120`)": "**{guest_bench[radix-sort-u64, provable-120].verify_wall:.0f ms}** ({guest_bench[radix-sort-u64, provable-120].verify_rss:.1f MiB} RSS)"
+        "`open-magnetar` (`test`)":         "**{guest_bench[radix-sort-u64, test].verify_wall:.0f ms}** ({guest_bench[radix-sort-u64, test].verify_rss:.1f MiB} RSS)"
+      "Prover throughput":
+        "`open-magnetar` (`provable-120`)": "**~{guest_bench[radix-sort-u64, provable-120].throughput:.0fk cycles/s}** ({guest_bench[radix-sort-u64, provable-120].prove_wall:.2f s} wall, {guest_bench[radix-sort-u64, provable-120].prove_cpu:.1f s} CPU)"
+        "`open-magnetar` (`test`)":         "**~{guest_bench[radix-sort-u64, test].throughput:.0fk cycles/s}** ({guest_bench[radix-sort-u64, test].prove_wall:.2f s} wall, {guest_bench[radix-sort-u64, test].prove_cpu:.1f s} CPU)"
+        "Gap / Status":                     "**~15× behind** (improved **{guest_bench[radix-sort-u64, test].speedup_vs_initial:.1f×}** from the initial 39k cycles/s / 107 s baseline)"
+      "Prover peak memory":
+        "`open-magnetar` (`provable-120`)": "**{guest_bench[radix-sort-u64, provable-120].heap_peak:.1f GiB} heap / {guest_bench[radix-sort-u64, provable-120].peak_rss:.1f GiB} footprint**"
+        "`open-magnetar` (`test`)":         "**{guest_bench[radix-sort-u64, test].heap_peak:.1f GiB} heap / {guest_bench[radix-sort-u64, test].peak_rss:.1f GiB} footprint**"
+
+  bench.phase_breakdown:
+    file: docs/BENCHMARKS.md
+    mode: checklist
+    key_column: Phase
+    cell_patterns:
+      "header:Previous": "Previous ({phase_bench.prev_total_wall:.2f s})"
+    rows:
+      "Twist & Shout":
+        "Wall Time ($T = 2^{22}$)": "**{phase_bench.twist_shout_wall:.2f s}**"
+        "Share":                    "{phase_bench.twist_shout_share:.0f%}"
+        "Previous (20.62 s)":       "{phase_bench.twist_shout_prev_wall:.2f s}"
+        "Speedup":                  "**{phase_bench.twist_shout_speedup:.2f×}**"
+      "Ligerito Open + Ring Switching":
+        "Wall Time ($T = 2^{22}$)": "**{phase_bench[ligerito_open].duration:.2f s}**"
+        "Share":                    "{phase_bench[ligerito_open].share_of_total:.0f%}"
+        "Previous (20.62 s)":       "{phase_bench@prev[ligerito_open].duration:.2f s}"
+        "Speedup":                  "**{phase_bench[ligerito_open].speedup_vs_prev:.2f×}**"
+      "Execute + Witness + Routers":
+        "Wall Time ($T = 2^{22}$)": "**{phase_bench.exec_witness_routers_wall:.2f s}**"
+        "Share":                    "{phase_bench.exec_witness_routers_share:.0f%}"
+        "Previous (20.62 s)":       "{phase_bench.exec_witness_routers_prev_wall:.2f s}"
+        "Speedup":                  "~{phase_bench.exec_witness_routers_speedup:.1f×}"
+      "Virtual Spartan":
+        "Wall Time ($T = 2^{22}$)": "**{phase_bench[virtual_spartan].duration:.2f s}**"
+        "Share":                    "{phase_bench[virtual_spartan].share_of_total:.0f%}"
+        "Previous (20.62 s)":       "{phase_bench@prev[virtual_spartan].duration:.2f s}"
+        "Speedup":                  "**{phase_bench[virtual_spartan].speedup_vs_prev:.2f×}**"
+      "PCS Commit":
+        "Wall Time ($T = 2^{22}$)": "**{phase_bench[commit].duration:.2f s}**"
+        "Share":                    "{phase_bench[commit].share_of_total:.0f%}"
+        "Previous (20.62 s)":       "{phase_bench@prev[commit].duration:.2f s}"
+        "Speedup":                  "**{phase_bench[commit].speedup_vs_prev:.2f×}**"
+      "Mosaic Batch":
+        "Wall Time ($T = 2^{22}$)": "**{phase_bench[mosaic_batch].duration:.2f s}**"
+        "Share":                    "{phase_bench[mosaic_batch].share_of_total:.0f%}"
+        "Previous (20.62 s)":       "{phase_bench@prev[mosaic_batch].duration:.2f s}"
+        "Speedup":                  "**{phase_bench[mosaic_batch].speedup_vs_prev:.2f×}**"
+
+  validation.public_vectors:
+    file: docs/VALIDATION.md
+    mode: records
+    family: validation_vec
+    key_columns: { Case: case }
+    columns:
+      "Input bytes":           "{input_bytes:,}"
+      "Padded virtual cycles": "{cycles:,}"
+      "Proof bytes":           "{proof_bytes:,}"
+      "Output matches":        "{output_matches:Yes|No}"
+      "Verification":          "{verified:Accepted|Rejected}"
+
+  spec.soundness_ledger:
+    file: docs/spec/13-security.md
+    mode: records
+    family: soundness_ledger
+    key_columns: { "#": row }
+    sentinels: ["exact", "—", "N/A"]
+    columns:
+      "per-round bits":       "{per_round_bits:.1f}"
+      "reduction total bits": "{reduction_total_bits:.1f}"

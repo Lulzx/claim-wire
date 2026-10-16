@@ -1,0 +1,45 @@
+schema: claimwire/v1
+
+producers:
+  om.benchmarks:
+    command: ["cargo", "run", "-p", "om-bench", "--release", "--", "--emit-cw"]
+    families: [guest_bench, phase_bench]
+    inputs:
+      files:
+        - "crates/**/*.rs"
+        - "guest/**/*.{c,h,ld}"
+        - "Cargo.lock"
+        - "rust-toolchain.toml"
+      env: []
+    on_stale: error
+    epochs:
+      current: bench-20261016-m4pro
+      prev:    bench-20261015-m4pro
+      initial: bench-20261014-m4pro
+
+  om.validation:
+    command: ["python3", "tools/validate_vectors.py", "--emit-cw"]
+    families: [validation_vec]
+    inputs:
+      files:
+        - "crates/**/*.rs"
+        - "guest/**/*.{c,h,ld}"
+    on_stale: error
+    epochs:
+      current: validation-20261016
+
+  om.inventory:
+    command: ["python3", "tools/inventory.py", "--emit-cw"]
+    families: []
+    inputs:
+      files: ["crates/**/*.rs", "reference/tests/**/*.py", "tests/vectors/**"]
+    epochs:
+      current: inventory-20261016
+
+  om.soundness:
+    command: ["python3", "reference/openmagnetar/params.py", "--emit-cw"]
+    families: [soundness_ledger]
+    inputs:
+      files: ["reference/openmagnetar/params.py"]
+    epochs:
+      current: soundness-20261016

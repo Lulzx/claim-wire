@@ -1,0 +1,93 @@
+{
+  "schema": "claimwire-run/v1",
+  "producer": "om.benchmarks",
+  "run_id": "bench-20261015-m4pro",
+  "timestamp": "2026-10-15T18:10:00Z",
+  "git_commit": "7412b0c",
+  "input_set_digest": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
+  "environment": {
+    "os": "macOS 15.2",
+    "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+    "toolchain": "rustc 1.90.0"
+  },
+  "records": [
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "keccak-f1600", "profile": "test" },
+      "metrics": {
+        "cycles": 32768,
+        "prove_wall": 270000000.0,
+        "proof_size": 39806
+      }
+    },
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "keccak-f1600", "profile": "provable-120" },
+      "metrics": {
+        "cycles": 32768,
+        "prove_wall": 270000000.0,
+        "proof_size": 288926
+      }
+    },
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "sha256(\"abc\")", "profile": "test" },
+      "metrics": {
+        "cycles": 8192,
+        "prove_wall": 150000000.0,
+        "proof_size": 34526
+      }
+    },
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "fib(19)", "profile": "provable-120" },
+      "metrics": {
+        "cycles": 256,
+        "prove_wall": 30000000.0,
+        "proof_size": 83654
+      }
+    },
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "radix-sort-u64", "profile": "test" },
+      "metrics": {
+        "cycles": 4194304,
+        "prove_wall": 19900000000.0,
+        "prove_cpu": 186000000000.0,
+        "peak_rss": 9019431322,
+        "heap_peak": 6227704218,
+        "verify_wall": 10000000.0,
+        "verify_cpu": 20000000.0,
+        "verify_rss": 28101837,
+        "proof_size": 60806
+      }
+    },
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "radix-sort-u64", "profile": "provable-120" },
+      "metrics": {
+        "cycles": 4194304,
+        "prove_wall": 20700000000.0,
+        "prove_cpu": 189000000000.0,
+        "peak_rss": 9019431322,
+        "heap_peak": 6442450944,
+        "verify_wall": 50000000.0,
+        "verify_cpu": 50000000.0,
+        "verify_rss": 50226790,
+        "proof_size": 603942
+      }
+    },
+    { "family": "phase_bench", "scope": { "phase": "execute" },             "metrics": { "duration": 750000000.0,  "heap_peak": 1610612736 } },
+    { "family": "phase_bench", "scope": { "phase": "packed_witness" },      "metrics": { "duration": 120000000.0,  "heap_peak": 2684354560 } },
+    { "family": "phase_bench", "scope": { "phase": "component_witnesses" }, "metrics": { "duration": 290000000.0,  "heap_peak": 3006477107 } },
+    { "family": "phase_bench", "scope": { "phase": "build_g" },             "metrics": { "duration": 80000000.0,   "heap_peak": 2576980378 } },
+    { "family": "phase_bench", "scope": { "phase": "commit" },              "metrics": { "duration": 1490000000.0, "heap_peak": 6442450944 } },
+    { "family": "phase_bench", "scope": { "phase": "virtual_spartan" },     "metrics": { "duration": 9330000000.0, "heap_peak": 3435973837 } },
+    { "family": "phase_bench", "scope": { "phase": "register_twist" },      "metrics": { "duration": 1460000000.0, "heap_peak": 2791728742 } },
+    { "family": "phase_bench", "scope": { "phase": "ram_twist" },           "metrics": { "duration": 1920000000.0, "heap_peak": 2576980378 } },
+    { "family": "phase_bench", "scope": { "phase": "routers" },             "metrics": { "duration": 390000000.0,  "heap_peak": 1825361101 } },
+    { "family": "phase_bench", "scope": { "phase": "bytecode_shout" },      "metrics": { "duration": 300000000.0,  "heap_peak": 1825361101 } },
+    { "family": "phase_bench", "scope": { "phase": "mosaic_batch" },        "metrics": { "duration": 2210000000.0, "heap_peak": 1932735283 } },
+    { "family": "phase_bench", "scope": { "phase": "ligerito_open" },       "metrics": { "duration": 2280000000.0, "heap_peak": 6227704218 } }
+  ]
+}

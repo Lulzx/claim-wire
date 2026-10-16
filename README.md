@@ -6,7 +6,7 @@
 
 Claim Wire treats the numbers in your Markdown as build targets. Each one is typed, traceable to the run that produced it, and rebuilt only when its inputs actually change.
 
-[![Status: design draft](https://img.shields.io/badge/status-design%20draft-orange)](#roadmap)
+[![Status: implemented (M1–M6)](https://img.shields.io/badge/status-implemented%20(M1--M6)-brightgreen)](#roadmap)
 [![Spec v0.4](https://img.shields.io/badge/spec-v0.4-blue)](spec.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)](#license)
 [![LLM calls at check time: 0](https://img.shields.io/badge/LLM%20calls%20in%20CI-0-black)](#two-phases-probabilistic-discovery-deterministic-maintenance)
@@ -16,7 +16,7 @@ Claim Wire treats the numbers in your Markdown as build targets. Each one is typ
 </div>
 
 > [!NOTE]
-> **Claim Wire is in the design phase.** The normative design lives in [`spec.md`](spec.md); the `cw` implementation has not started yet. Every command output below shows **target behavior** from the spec's acceptance suite, not a shipped tool. Design feedback is very welcome; see [Open Questions](spec.md#12-open-questions-pre-implementation).
+> **Claim Wire `v0.4` is implemented across all five workspace crates (`cw-syntax`, `cw-ir`, `cw-evidence`, `cw-engine`, `cw-cli`).** The normative design lives in [`spec.md`](spec.md), and the 10-point acceptance suite runs end-to-end against [`tests/fixtures/magnetar/`](tests/fixtures/magnetar/).
 
 ---
 
@@ -311,12 +311,12 @@ claim-wire/
 ## Roadmap
 
 - [x] **Spec v0.4**: type system, addressing grammar, format patterns, lenses, evidence model, lockfile, diagnostics
-- [ ] **M1 · `cw-syntax`**: lossless CST, GFM row lexer, inline/table/block lens parsing, round-trip property tests
-- [ ] **M2 · `cw-ir`**: dimensional type checker, family expansion, reductions, epoch resolution
-- [ ] **M3 · `cw-evidence`**: `@cw:` capture, run manifests, two-tier semantic fingerprinting
-- [ ] **M4 · `cw-engine` + `cw check` / `cw sync` / `cw adopt`**: evaluation, deadband, conflict and context audit, transactional patching
-- [ ] **M5 · Acceptance suite**: all 10 points of [spec §10.2](spec.md#102-10-point-automated-verification-matrix) passing on the `magnetar` fixture
-- [ ] **M6 · `impact`, `explain`, `diff`, `merge-driver`**, plus the `claim-wire` agent skill
+- [x] **M1 · `cw-syntax`**: lossless CST, GFM row lexer, inline/table/block lens parsing, round-trip property tests
+- [x] **M2 · `cw-ir`**: dimensional type checker, family expansion, reductions, epoch resolution
+- [x] **M3 · `cw-evidence`**: `@cw:` capture, run manifests, two-tier semantic fingerprinting
+- [x] **M4 · `cw-engine` + `cw check` / `cw sync` / `cw adopt`**: evaluation, deadband, conflict and context audit, transactional patching
+- [x] **M5 · Acceptance suite**: all 10 points of [spec §10.2](spec.md#102-10-point-automated-verification-matrix) passing on the `magnetar` fixture
+- [x] **M6 · `impact`, `explain`, `diff`, `merge-driver`**, plus the `claim-wire` agent skill
 
 ---
 

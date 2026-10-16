@@ -1,0 +1,29 @@
+{
+  "schema": "claimwire-run/v1",
+  "run_id": "inventory-20261016",
+  "producer": "om.inventory",
+  "timestamp": "2026-10-16T10:00:00Z",
+  "git_commit": "f8382f3",
+  "git_dirty": false,
+  "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+  "environment": {
+    "os": "macOS 15.2",
+    "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+    "toolchain": "rustc 1.90.0, python 3.12"
+  },
+  "input_set_digest": "blake3:24e49cf35378e3af0c0f37f93d888320a3222ebe32b249e36311bd8f089952b5",
+  "input_files": {
+    "crates/om-spartan/src/lib.rs": "blake3:f176f317658bb28c3ec7ea8482a87a847ac3f19bcaf74272f9ad444b45401ac5",
+    "reference/tests/test_params.py": "blake3:82c0a610d0dc1bfeb74812822d3bba72b69d0639e9d66fe845e16f25ef287e9f"
+  },
+  "scalars": {
+    "rust_crates": 16.0,
+    "vector_files": 27.0,
+    "table1_workloads": 15.0,
+    "table1_proved": 11.0,
+    "rust_tests": 362.0,
+    "python_tests": 227.0,
+    "isa_tests": 46.0,
+    "oracle_cases": 47.0
+  }
+}

@@ -1,0 +1,6 @@
+# Cargo.lock fixture for open-magnetar
+version = 4
+
+[[package]]
+name = "om"
+version = "0.1.0"

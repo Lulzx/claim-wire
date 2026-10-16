@@ -1,0 +1,373 @@
+{
+  "schema": "claimwire-run/v1",
+  "run_id": "bench-20261016-m4pro",
+  "producer": "om.benchmarks",
+  "timestamp": "2026-10-16T14:22:08Z",
+  "git_commit": "9872a7e",
+  "git_dirty": false,
+  "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+  "environment": {
+    "os": "macOS 15.2",
+    "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+    "toolchain": "rustc 1.90.0"
+  },
+  "input_set_digest": "blake3:76305d3fcd07503ed60fc38b2102777501022fa198057cf7495dfacb58528bab",
+  "input_files": {
+    "Cargo.lock": "blake3:926ac2b361a4bb57ec81f031138dfdb37cf5bd0a6d57544b94d8861c6b77e2b3",
+    "crates/om-spartan/src/lib.rs": "blake3:f176f317658bb28c3ec7ea8482a87a847ac3f19bcaf74272f9ad444b45401ac5",
+    "guest/examples/fib.c": "blake3:c1bb911d83a2f6cc4f36d595a7bda891cd41ea8724b4a1e72345002726a266ab",
+    "rust-toolchain.toml": "blake3:779f5c18a243c3aecafc4d1559ace084b9228a328d3d4f09ccdddc3278a9f63e"
+  },
+  "families": {
+    "guest_bench": [
+      {
+        "scope": {
+          "workload": "fib(19)",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 256.0,
+          "prove_wall": 20000000.0,
+          "prove_cpu": 20000000.0,
+          "peak_rss": 16777216.0,
+          "heap_peak": 8388608.0,
+          "verify_wall": 10000000.0,
+          "verify_cpu": 10000000.0,
+          "verify_rss": 16777216.0,
+          "proof_size": 23526.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "fib(19)",
+          "profile": "provable-120"
+        },
+        "metrics": {
+          "cycles": 256.0,
+          "prove_wall": 20000000.0,
+          "prove_cpu": 20000000.0,
+          "peak_rss": 24117248.0,
+          "heap_peak": 12582912.0,
+          "verify_wall": 20000000.0,
+          "verify_cpu": 20000000.0,
+          "verify_rss": 24117248.0,
+          "proof_size": 83654.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "erc20-transfer",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 512.0,
+          "prove_wall": 20000000.0,
+          "prove_cpu": 20000000.0,
+          "peak_rss": 18874368.0,
+          "heap_peak": 9437184.0,
+          "verify_wall": 10000000.0,
+          "verify_cpu": 10000000.0,
+          "verify_rss": 18874368.0,
+          "proof_size": 25398.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "sha256(\"abc\")",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 8192.0,
+          "prove_wall": 70000000.0,
+          "prove_cpu": 70000000.0,
+          "peak_rss": 42991616.0,
+          "heap_peak": 20971520.0,
+          "verify_wall": 10000000.0,
+          "verify_cpu": 10000000.0,
+          "verify_rss": 20971520.0,
+          "proof_size": 34526.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "keccak-f1600",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 32768.0,
+          "prove_wall": 140000000.0,
+          "prove_cpu": 140000000.0,
+          "peak_rss": 117440512.0,
+          "heap_peak": 67108864.0,
+          "verify_wall": 10000000.0,
+          "verify_cpu": 10000000.0,
+          "verify_rss": 20971520.0,
+          "proof_size": 39806.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "keccak-f1600",
+          "profile": "provable-120"
+        },
+        "metrics": {
+          "cycles": 32768.0,
+          "prove_wall": 140000000.0,
+          "prove_cpu": 140000000.0,
+          "peak_rss": 126877696.0,
+          "heap_peak": 73400320.0,
+          "verify_wall": 30000000.0,
+          "verify_cpu": 30000000.0,
+          "verify_rss": 25165824.0,
+          "proof_size": 288926.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "radix-sort-u64",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 4194304.0,
+          "prove_wall": 8548700000.0,
+          "prove_cpu": 66300000000.0,
+          "peak_rss": 8912055501.0,
+          "heap_peak": 6120328397.0,
+          "verify_wall": 10000000.0,
+          "verify_cpu": 20000000.0,
+          "verify_rss": 28101837.0,
+          "proof_size": 60806.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "radix-sort-u64",
+          "profile": "provable-120"
+        },
+        "metrics": {
+          "cycles": 4194304.0,
+          "prove_wall": 8820000000.0,
+          "prove_cpu": 66800000000.0,
+          "peak_rss": 9019431322.0,
+          "heap_peak": 6227704218.0,
+          "verify_wall": 50000000.0,
+          "verify_cpu": 50000000.0,
+          "verify_rss": 50226790.0,
+          "proof_size": 603942.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "hot-cell-increment",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 1024.0,
+          "proof_size": 27558.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "stream-copy",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 256.0,
+          "proof_size": 23622.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "pointer-chase",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 1024.0,
+          "proof_size": 27590.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "binary-search",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 512.0,
+          "proof_size": 25462.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "varint-decode",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 512.0,
+          "proof_size": 25558.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "lz4-decode",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 256.0,
+          "proof_size": 23494.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "erc20-transfer-from",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 1024.0,
+          "proof_size": 27894.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "erc20-mixed-block",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 512.0,
+          "proof_size": 25878.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "sha256-merkle-path",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 32768.0,
+          "prove_wall": null,
+          "proof_size": 40382.0
+        }
+      },
+      {
+        "scope": {
+          "workload": "evm-erc20-transfer",
+          "profile": "test"
+        },
+        "metrics": {
+          "cycles": 65536.0,
+          "prove_wall": 53600000000.0,
+          "proof_size": 43646.0
+        }
+      }
+    ],
+    "phase_bench": [
+      {
+        "scope": {
+          "phase": "execute"
+        },
+        "metrics": {
+          "duration": 760000000.0,
+          "heap_peak": 1610612736.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "packed_witness"
+        },
+        "metrics": {
+          "duration": 130000000.0,
+          "heap_peak": 2684354560.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "component_witnesses"
+        },
+        "metrics": {
+          "duration": 290000000.0,
+          "heap_peak": 3006477107.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "build_g"
+        },
+        "metrics": {
+          "duration": 90000000.0,
+          "heap_peak": 2576980378.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "commit"
+        },
+        "metrics": {
+          "duration": 1220000000.0,
+          "heap_peak": 4939212390.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "virtual_spartan"
+        },
+        "metrics": {
+          "duration": 1540000000.0,
+          "heap_peak": 3435973837.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "register_twist"
+        },
+        "metrics": {
+          "duration": 790000000.0,
+          "heap_peak": 2791728742.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "ram_twist"
+        },
+        "metrics": {
+          "duration": 1390000000.0,
+          "heap_peak": 2576980378.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "routers"
+        },
+        "metrics": {
+          "duration": 420000000.0,
+          "heap_peak": 1825361101.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "bytecode_shout"
+        },
+        "metrics": {
+          "duration": 200000000.0,
+          "heap_peak": 1825361101.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "mosaic_batch"
+        },
+        "metrics": {
+          "duration": 270000000.0,
+          "heap_peak": 1932735283.0
+        }
+      },
+      {
+        "scope": {
+          "phase": "ligerito_open"
+        },
+        "metrics": {
+          "duration": 1660000000.0,
+          "heap_peak": 6227704218.0
+        }
+      }
+    ]
+  }
+}

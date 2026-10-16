@@ -1,0 +1,42 @@
+{
+  "schema": "claimwire-run/v1",
+  "producer": "om.benchmarks",
+  "run_id": "bench-20261014-m4pro",
+  "timestamp": "2026-10-14T09:00:00Z",
+  "git_commit": "3301a9d",
+  "input_set_digest": "blake3:2222222222222222222222222222222222222222222222222222222222222222",
+  "environment": {
+    "os": "macOS 15.2",
+    "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+    "toolchain": "rustc 1.90.0"
+  },
+  "records": [
+    {
+      "family": "guest_bench",
+      "scope": { "workload": "radix-sort-u64", "profile": "test" },
+      "metrics": {
+        "cycles": 4194304,
+        "prove_wall": 107000000000.0,
+        "prove_cpu": 794000000000.0,
+        "peak_rss": 10844792422,
+        "heap_peak": 9126805504,
+        "verify_wall": 420000000.0,
+        "verify_cpu": 420000000.0,
+        "verify_rss": 70254592,
+        "proof_size": 61446
+      }
+    },
+    { "family": "phase_bench", "scope": { "phase": "execute" },             "metrics": { "duration": 800000000.0,   "heap_peak": 1610612736 } },
+    { "family": "phase_bench", "scope": { "phase": "packed_witness" },      "metrics": { "duration": 16900000000.0, "heap_peak": 2684354560 } },
+    { "family": "phase_bench", "scope": { "phase": "component_witnesses" }, "metrics": { "duration": 400000000.0,   "heap_peak": 3006477107 } },
+    { "family": "phase_bench", "scope": { "phase": "build_g" },             "metrics": { "duration": 7200000000.0,  "heap_peak": 2576980378 } },
+    { "family": "phase_bench", "scope": { "phase": "commit" },              "metrics": { "duration": 11500000000.0, "heap_peak": 9126805504 } },
+    { "family": "phase_bench", "scope": { "phase": "virtual_spartan" },     "metrics": { "duration": 51600000000.0, "heap_peak": 3435973837 } },
+    { "family": "phase_bench", "scope": { "phase": "register_twist" },      "metrics": { "duration": 3400000000.0,  "heap_peak": 2791728742 } },
+    { "family": "phase_bench", "scope": { "phase": "ram_twist" },           "metrics": { "duration": 4200000000.0,  "heap_peak": 2576980378 } },
+    { "family": "phase_bench", "scope": { "phase": "routers" },             "metrics": { "duration": 700000000.0,   "heap_peak": 1825361101 } },
+    { "family": "phase_bench", "scope": { "phase": "bytecode_shout" },      "metrics": { "duration": 300000000.0,   "heap_peak": 1825361101 } },
+    { "family": "phase_bench", "scope": { "phase": "mosaic_batch" },        "metrics": { "duration": 2800000000.0,  "heap_peak": 1932735283 } },
+    { "family": "phase_bench", "scope": { "phase": "ligerito_open" },       "metrics": { "duration": 7200000000.0,  "heap_peak": 8482560410 } }
+  ]
+}

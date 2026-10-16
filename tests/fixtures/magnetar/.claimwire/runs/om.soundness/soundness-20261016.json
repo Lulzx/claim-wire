@@ -1,0 +1,382 @@
+{
+  "schema": "claimwire-run/v1",
+  "run_id": "soundness-20261016",
+  "producer": "om.soundness",
+  "timestamp": "2026-10-16T11:30:00Z",
+  "git_commit": "f8382f3",
+  "git_dirty": false,
+  "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+  "environment": {
+    "os": "macOS 15.2",
+    "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+    "toolchain": "python 3.12"
+  },
+  "input_set_digest": "blake3:9faf79c4feb1c5a4ad0f2abce5022550b3eefd9e107a5a2f4ff8c4ee8ea4bf03",
+  "input_files": {
+    "reference/openmagnetar/params.py": "blake3:9d259aac3665e16b35c64e8b2cc27d5a90cabee7488f893ccc22605a53f8c7eb"
+  },
+  "families": {
+    "soundness_ledger": [
+      {
+        "scope": {
+          "row": "1"
+        },
+        "metrics": {
+          "per_round_bits": 123.1,
+          "reduction_total_bits": 122.1
+        }
+      },
+      {
+        "scope": {
+          "row": "2"
+        },
+        "metrics": {
+          "per_round_bits": 125.4,
+          "reduction_total_bits": 120.5
+        }
+      },
+      {
+        "scope": {
+          "row": "3"
+        },
+        "metrics": {
+          "per_round_bits": 128.0,
+          "reduction_total_bits": 128.0
+        }
+      },
+      {
+        "scope": {
+          "row": "4"
+        },
+        "metrics": {
+          "per_round_bits": 127.0,
+          "reduction_total_bits": 123.2
+        }
+      },
+      {
+        "scope": {
+          "row": "5"
+        },
+        "metrics": {
+          "per_round_bits": null,
+          "reduction_total_bits": null
+        }
+      },
+      {
+        "scope": {
+          "row": "6"
+        },
+        "metrics": {
+          "per_round_bits": 123.1,
+          "reduction_total_bits": 121.6
+        }
+      },
+      {
+        "scope": {
+          "row": "7"
+        },
+        "metrics": {
+          "per_round_bits": 127.0,
+          "reduction_total_bits": 122.9
+        }
+      },
+      {
+        "scope": {
+          "row": "8"
+        },
+        "metrics": {
+          "per_round_bits": 125.7,
+          "reduction_total_bits": 121.2
+        }
+      },
+      {
+        "scope": {
+          "row": "9"
+        },
+        "metrics": {
+          "per_round_bits": 122.6,
+          "reduction_total_bits": 121.0
+        }
+      },
+      {
+        "scope": {
+          "row": "10"
+        },
+        "metrics": {
+          "per_round_bits": 126.4,
+          "reduction_total_bits": 121.6
+        }
+      },
+      {
+        "scope": {
+          "row": "11"
+        },
+        "metrics": {
+          "per_round_bits": 126.4,
+          "reduction_total_bits": 122.0
+        }
+      },
+      {
+        "scope": {
+          "row": "12"
+        },
+        "metrics": {
+          "per_round_bits": 126.4,
+          "reduction_total_bits": 121.9
+        }
+      },
+      {
+        "scope": {
+          "row": "13"
+        },
+        "metrics": {
+          "per_round_bits": 122.8,
+          "reduction_total_bits": 121.0
+        }
+      },
+      {
+        "scope": {
+          "row": "14"
+        },
+        "metrics": {
+          "per_round_bits": 126.4,
+          "reduction_total_bits": 120.9
+        }
+      },
+      {
+        "scope": {
+          "row": "15"
+        },
+        "metrics": {
+          "per_round_bits": 126.4,
+          "reduction_total_bits": 122.0
+        }
+      },
+      {
+        "scope": {
+          "row": "16"
+        },
+        "metrics": {
+          "per_round_bits": 124.0,
+          "reduction_total_bits": 122.1
+        }
+      },
+      {
+        "scope": {
+          "row": "17"
+        },
+        "metrics": {
+          "per_round_bits": 125.2,
+          "reduction_total_bits": 120.7
+        }
+      },
+      {
+        "scope": {
+          "row": "18"
+        },
+        "metrics": {
+          "per_round_bits": 122.6,
+          "reduction_total_bits": 121.0
+        }
+      },
+      {
+        "scope": {
+          "row": "19"
+        },
+        "metrics": {
+          "per_round_bits": null,
+          "reduction_total_bits": null
+        }
+      },
+      {
+        "scope": {
+          "row": "20"
+        },
+        "metrics": {
+          "per_round_bits": 126.0,
+          "reduction_total_bits": 120.8
+        }
+      },
+      {
+        "scope": {
+          "row": "21"
+        },
+        "metrics": {
+          "per_round_bits": 125.4,
+          "reduction_total_bits": 120.5
+        }
+      },
+      {
+        "scope": {
+          "row": "22"
+        },
+        "metrics": {
+          "per_round_bits": 121.0,
+          "reduction_total_bits": 120.4
+        }
+      },
+      {
+        "scope": {
+          "row": "23"
+        },
+        "metrics": {
+          "per_round_bits": 125.2,
+          "reduction_total_bits": 122.1
+        }
+      },
+      {
+        "scope": {
+          "row": "24"
+        },
+        "metrics": {
+          "per_round_bits": 127.0,
+          "reduction_total_bits": 124.7
+        }
+      },
+      {
+        "scope": {
+          "row": "25"
+        },
+        "metrics": {
+          "per_round_bits": 120.5,
+          "reduction_total_bits": 120.5
+        }
+      },
+      {
+        "scope": {
+          "row": "26"
+        },
+        "metrics": {
+          "per_round_bits": 205.4,
+          "reduction_total_bits": 205.4
+        }
+      },
+      {
+        "scope": {
+          "row": "27"
+        },
+        "metrics": {
+          "per_round_bits": 120.0,
+          "reduction_total_bits": 120.0
+        }
+      },
+      {
+        "scope": {
+          "row": "28"
+        },
+        "metrics": {
+          "per_round_bits": 127.0,
+          "reduction_total_bits": 124.7
+        }
+      },
+      {
+        "scope": {
+          "row": "29"
+        },
+        "metrics": {
+          "per_round_bits": 120.5,
+          "reduction_total_bits": 120.5
+        }
+      },
+      {
+        "scope": {
+          "row": "30"
+        },
+        "metrics": {
+          "per_round_bits": 213.4,
+          "reduction_total_bits": 213.4
+        }
+      },
+      {
+        "scope": {
+          "row": "31"
+        },
+        "metrics": {
+          "per_round_bits": 120.0,
+          "reduction_total_bits": 120.0
+        }
+      },
+      {
+        "scope": {
+          "row": "32"
+        },
+        "metrics": {
+          "per_round_bits": 127.0,
+          "reduction_total_bits": 124.7
+        }
+      },
+      {
+        "scope": {
+          "row": "33"
+        },
+        "metrics": {
+          "per_round_bits": 120.5,
+          "reduction_total_bits": 120.5
+        }
+      },
+      {
+        "scope": {
+          "row": "34"
+        },
+        "metrics": {
+          "per_round_bits": 221.4,
+          "reduction_total_bits": 221.4
+        }
+      },
+      {
+        "scope": {
+          "row": "35"
+        },
+        "metrics": {
+          "per_round_bits": 120.0,
+          "reduction_total_bits": 120.0
+        }
+      },
+      {
+        "scope": {
+          "row": "36"
+        },
+        "metrics": {
+          "per_round_bits": 127.0,
+          "reduction_total_bits": 124.7
+        }
+      },
+      {
+        "scope": {
+          "row": "37"
+        },
+        "metrics": {
+          "per_round_bits": 120.5,
+          "reduction_total_bits": 120.5
+        }
+      },
+      {
+        "scope": {
+          "row": "38"
+        },
+        "metrics": {
+          "per_round_bits": 229.4,
+          "reduction_total_bits": 229.4
+        }
+      },
+      {
+        "scope": {
+          "row": "39"
+        },
+        "metrics": {
+          "per_round_bits": 120.0,
+          "reduction_total_bits": 120.0
+        }
+      },
+      {
+        "scope": {
+          "row": "40"
+        },
+        "metrics": {
+          "per_round_bits": 128.0,
+          "reduction_total_bits": 128.0
+        }
+      }
+    ]
+  }
+}

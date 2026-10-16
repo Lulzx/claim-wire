@@ -1,0 +1,59 @@
+{
+  "schema": "claimwire-run/v1",
+  "run_id": "validation-20261016",
+  "producer": "om.validation",
+  "timestamp": "2026-10-16T11:00:00Z",
+  "git_commit": "9872a7e",
+  "git_dirty": false,
+  "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+  "environment": {
+    "os": "macOS 15.2",
+    "hardware": "Apple M4 Pro, 14-core, 24 GiB",
+    "toolchain": "rustc 1.90.0, clang 19.1"
+  },
+  "input_set_digest": "blake3:5b78f7f614e42978b85d5ce03ad8ea6805b325abeb6160fb32c79a612c1b9075",
+  "input_files": {
+    "crates/om-spartan/src/lib.rs": "blake3:f176f317658bb28c3ec7ea8482a87a847ac3f19bcaf74272f9ad444b45401ac5",
+    "guest/examples/fib.c": "blake3:c1bb911d83a2f6cc4f36d595a7bda891cd41ea8724b4a1e72345002726a266ab"
+  },
+  "families": {
+    "validation_vec": [
+      {
+        "scope": {
+          "case": "empty"
+        },
+        "metrics": {
+          "input_bytes": 0.0,
+          "cycles": 8192.0,
+          "proof_bytes": 211390.0,
+          "output_matches": true,
+          "verified": true
+        }
+      },
+      {
+        "scope": {
+          "case": "abc"
+        },
+        "metrics": {
+          "input_bytes": 3.0,
+          "cycles": 8192.0,
+          "proof_bytes": 210814.0,
+          "output_matches": true,
+          "verified": true
+        }
+      },
+      {
+        "scope": {
+          "case": "message56"
+        },
+        "metrics": {
+          "input_bytes": 56.0,
+          "cycles": 16384.0,
+          "proof_bytes": 245214.0,
+          "output_matches": true,
+          "verified": true
+        }
+      }
+    ]
+  }
+}
