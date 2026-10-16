@@ -1,0 +1,17 @@
+[package]
+name = "cw-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Dimensional type checker, family/reduction expander, scope & epoch DAG resolver for Claim Wire"
+
+[dependencies]
+anyhow.workspace = true
+cw-syntax.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
