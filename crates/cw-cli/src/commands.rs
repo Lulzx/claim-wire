@@ -154,7 +154,7 @@ tables: {}
         );
     }
 
-    println!("\n{}", styler.brand_gradient("✨ Next Steps"));
+    println!("\n{}", styler.brand_gradient("◈ Next Steps"));
     println!(
         "  {} {:<18} {}",
         styler.magenta_bold("1."),

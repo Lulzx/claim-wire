@@ -75,7 +75,7 @@ fn dispatch(args: &[String]) -> Result<u8> {
     if first == "--version" || first == "-V" || first == "version" {
         println!(
             "{} {} {}",
-            s.brand_gradient("⚡ cw"),
+            s.brand_gradient("▪ cw"),
             s.cyan_bold(env!("CARGO_PKG_VERSION")),
             s.dim("(Claim Wire incremental documentation compiler)")
         );
