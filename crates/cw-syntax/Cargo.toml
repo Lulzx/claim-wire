@@ -1,0 +1,17 @@
+[package]
+name = "cw-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Lossless Markdown CST, GFM-conformant table lexer, block lens & bidirectional format parser for Claim Wire"
+
+[dependencies]
+anyhow.workspace = true
+hex.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

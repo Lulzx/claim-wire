@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/cw-syntax",
+    "crates/cw-ir",
+    "crates/cw-evidence",
+    "crates/cw-engine",
+    "crates/cw-cli",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Lulzx/claim-wire"
+rust-version = "1.90"
+
+[workspace.dependencies]
+anyhow = "1.0"
+glob = "0.3"
+hex = "0.4"
+indexmap = { version = "2.14", features = ["serde"] }
+regex = "1.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2.0"
+walkdir = "2.5"
+cw-syntax = { path = "crates/cw-syntax" }
+cw-ir = { path = "crates/cw-ir" }
+cw-evidence = { path = "crates/cw-evidence" }
+cw-engine = { path = "crates/cw-engine" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
