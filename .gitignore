@@ -1,0 +1,5 @@
+/target/
+/.claimwire/.cache/
+/.claimwire/.staging/
+.DS_Store
+*.swp
