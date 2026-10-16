@@ -92,10 +92,11 @@ pub fn evaluate_all(
         }
     }
 
-    let any_assertion_failed = assertions.values().any(|&passed| !passed);
-
-    // 3. Evaluate the `display` channel with deadband hysteresis if `!exact && !any_assertion_failed`
-    let display = if exact || any_assertion_failed || lockfile.is_none() {
+    // 3. Evaluate the `display` channel with deadband hysteresis unless `--exact`. Assertions
+    // always read `fresh` (§6.3), and a failing assertion holds back the locations that read its
+    // evidence in `cw sync`, so an unrelated failure must not switch hysteresis off for every
+    // other number in the workspace.
+    let display = if exact || lockfile.is_none() {
         fresh.clone()
     } else {
         let mut dummy_diags = Vec::new();

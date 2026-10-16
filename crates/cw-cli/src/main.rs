@@ -415,12 +415,15 @@ fn cmd_sync(workspace_root: &Path, args: &[String], s: &Styler, quiet: bool) -> 
         };
         for item in &report.patched_items {
             let coord = format!("{}:{}", item.file, item.line);
+            let changes = changed_tokens(&item.old_text, &item.new_text)
+                .into_iter()
+                .map(|(old, new)| format!("{} {arrow} {}", s.red(old), s.green_bold(new)))
+                .collect::<Vec<_>>()
+                .join(", ");
             println!(
-                "{action_verb}  {:<27} {}   {} {arrow} {}",
+                "{action_verb}  {:<27} {}   {changes}",
                 s.cyan_bold(&coord),
                 s.bold(&item.claim_summary),
-                s.red(&item.old_text),
-                s.green_bold(&item.new_text)
             );
         }
 
@@ -487,6 +490,20 @@ fn cmd_sync(workspace_root: &Path, args: &[String], s: &Styler, quiet: bool) -> 
     }
 
     Ok(if has_err { 1 } else { 0 })
+}
+
+/// The differing whitespace-separated tokens of a patched location, so a block line patch
+/// prints `52/52 → 53/53, 50/52 → 51/53` instead of two copies of the whole line. Falls back to
+/// the full texts when the token structure changed.
+fn changed_tokens<'a>(old: &'a str, new: &'a str) -> Vec<(&'a str, &'a str)> {
+    let (a, b): (Vec<&str>, Vec<&str>) = (
+        old.split_whitespace().collect(),
+        new.split_whitespace().collect(),
+    );
+    if a.len() != b.len() || a.len() <= 1 {
+        return vec![(old, new)];
+    }
+    a.into_iter().zip(b).filter(|(x, y)| x != y).collect()
 }
 
 fn cmd_adopt(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8> {

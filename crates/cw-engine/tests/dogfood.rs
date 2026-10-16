@@ -24,8 +24,8 @@ families:
     producer: bench
     dimensions: [variant]
     metrics:
-      time:   { type: Duration, format: "{:.1f [ms]}" }
-      gflops: { type: Float,    format: "{:,.1f}" }
+      time:   { type: Duration, format: "{:.1f [ms]}", deadband: 2.5% }
+      gflops: { type: Float,    format: "{:,.1f}", deadband: 2.5% }
     derivations:
       share:
         type: Ratio
@@ -456,4 +456,38 @@ fn capture_reuses_identical_runs_and_stamps_real_time() {
     let (fresh, _, reused) = ws.capture("counts");
     assert!(!reused);
     assert_ne!(fresh.run_id, first.run_id);
+}
+
+#[test]
+fn unrelated_failing_assertion_keeps_deadband_hysteresis() {
+    let ws = Workspace::new("deadband");
+    // `counts` now violates its own assertion ...
+    fs::write(
+        ws.path().join("counts.txt"),
+        "@cw:record total=52 typed=60\n",
+    )
+    .unwrap();
+    // ... while `fast` moves 1%, inside its 2.5% deadband.
+    fs::write(
+        ws.path().join("bench.txt"),
+        BENCH
+            .replace("time=\"10ms\"", "time=\"10.1ms\"")
+            .replace("gflops=2000", "gflops=1980"),
+    )
+    .unwrap();
+    ws.capture("counts");
+    ws.capture("bench");
+    let sync = run_sync(ws.path(), false, false, false).unwrap();
+    assert!(
+        sync.diagnostics
+            .iter()
+            .any(|d| d.message.contains("check.typed_le_total")),
+        "{:?}",
+        sync.diagnostics
+    );
+    assert_eq!(
+        ws.read("docs/bench.md"),
+        BENCH_MD,
+        "a held-in-band value must not churn"
+    );
 }
