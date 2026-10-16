@@ -30,7 +30,9 @@ pub enum FormatSpec {
         grouping: bool,
         precision: Option<usize>,
         kind: Option<NumericKind>,
-        /// Verbatim unit text up to `}` (whitespace significant, §4.5 rule 2).
+        /// Verbatim unit text up to `}` (whitespace significant, §4.5 rule 2). A unit in square
+        /// brackets (`{:.3f [ms]}`) scales without being rendered, for tables whose header
+        /// carries the unit (`Time (ms)`); see [`split_hidden_unit`].
         unit: String,
     },
     Named(NamedFormat),
@@ -136,7 +138,8 @@ impl FormatPattern {
             // Does this placeholder's own unit terminate its numeric portion?
             let unit_terminates_number = match &ph.spec {
                 FormatSpec::Numeric { unit, .. } => {
-                    !unit.is_empty() && !literal_continues_number(unit, false)
+                    let (_, shown) = split_hidden_unit(unit);
+                    !shown.is_empty() && !literal_continues_number(shown, false)
                 }
                 FormatSpec::Named(NamedFormat::AutoIec | NamedFormat::AutoTime) => true,
                 FormatSpec::Named(NamedFormat::Pow2 | NamedFormat::NegPow2 | NamedFormat::Hex8) => {
@@ -292,6 +295,16 @@ impl FormatPattern {
         }
 
         Ok(results)
+    }
+}
+
+/// Split a numeric spec's unit into `(unit used for scaling, text rendered after the number)`.
+/// `[ms]` (optionally space-padded) scales by milliseconds and renders nothing.
+pub fn split_hidden_unit(unit: &str) -> (&str, &str) {
+    let t = unit.trim();
+    match t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+        Some(inner) => (inner.trim(), ""),
+        None => (unit, unit),
     }
 }
 
@@ -512,6 +525,7 @@ pub fn validate_spec_for_type(
             }
         }
         FormatSpec::Numeric { unit, .. } => {
+            let (unit, _) = split_hidden_unit(unit);
             if ty.requires_explicit_unit() && unit.trim().is_empty() {
                 return Err(Diagnostic::error(
                     DiagnosticCode::CW2005,
@@ -605,15 +619,16 @@ fn render_single(
                 unit,
             },
         ) => {
-            let scale = ty.unit_scale_to_canonical(unit).ok_or_else(|| {
+            let (scale_unit, shown) = split_hidden_unit(unit);
+            let scale = ty.unit_scale_to_canonical(scale_unit).ok_or_else(|| {
                 Diagnostic::error(
                     DiagnosticCode::CW2005,
-                    format!("Invalid unit `{}` for type `{ty}`", unit.trim()),
+                    format!("Invalid unit `{}` for type `{ty}`", scale_unit.trim()),
                 )
             })?;
             let scaled = *n / scale;
             let num_str = format_number_half_to_even(scaled, *precision, *grouping, *kind);
-            Ok(format!("{num_str}{unit}"))
+            Ok(format!("{num_str}{shown}"))
         }
         _ => Err(Diagnostic::error(
             DiagnosticCode::CW2001,
@@ -928,8 +943,9 @@ fn parse_single_placeholder<'a>(
                     return Ok((CanonicalValue::Bool(false), rest));
                 }
             }
+            let (scale_unit, shown) = split_hidden_unit(unit);
             let (num_str, after_num) = take_numeric_prefix(cursor)?;
-            let Some(rest) = after_num.strip_prefix(unit.as_str()) else {
+            let Some(rest) = after_num.strip_prefix(shown) else {
                 return Err(Diagnostic::error(
                     DiagnosticCode::CW3003,
                     format!(
@@ -943,7 +959,7 @@ fn parse_single_placeholder<'a>(
                     format!("Invalid number `{num_str}` in `{cursor}`"),
                 )
             })?;
-            let scale = ty.unit_scale_to_canonical(unit).unwrap_or(1.0);
+            let scale = ty.unit_scale_to_canonical(scale_unit).unwrap_or(1.0);
             Ok((CanonicalValue::Number(num * scale), rest))
         }
     }
@@ -989,6 +1005,32 @@ fn take_numeric_prefix(s: &str) -> Result<(&str, &str), Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_units_scale_without_rendering() {
+        let dur = |_: Option<&str>| Ok(ValueType::Duration);
+        let p = FormatPattern::parse("{t:.3f [ms]}").unwrap();
+        let ns = 406_265_917.0;
+        let out = p
+            .render(|_| Ok((CanonicalValue::Number(ns), ValueType::Duration)))
+            .unwrap();
+        assert_eq!(out, "406.266");
+        let back = p.reverse_parse("406.266", dur).unwrap();
+        assert_eq!(back["t"].as_f64(), Some(406_266_000.0));
+        // Still type-checked: a hidden unit must be valid for the type.
+        assert!(p.validate_types(|_| Ok(ValueType::Duration)).is_ok());
+        assert_eq!(
+            p.validate_types(|_| Ok(ValueType::Bytes)).unwrap_err().code,
+            DiagnosticCode::CW2005
+        );
+        // And a hidden unit does not terminate the number.
+        assert_eq!(
+            FormatPattern::parse("{a:.1f [ms]}{b:.1f [ms]}")
+                .unwrap_err()
+                .code,
+            DiagnosticCode::CW1007
+        );
+    }
 
     #[test]
     fn invertibility_follows_the_reverse_parser() {

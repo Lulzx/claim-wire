@@ -141,7 +141,7 @@ Every value in Claim IR has a static `ValueType`. Combining incompatible types (
 1. **`const` (Declaration):** Maintainer-approved external constant or specification bound (`paper.t22.proof_size_max = 599 KiB`).
 2. **`source` / `family` (Observation):** Extracts typed metrics from a producer's run manifest, indexed by structured `dimensions` (`[workload, profile]`, `[phase]`, `[case]`).
 3. **`derive` (Derivation):** Pure mathematical expression over claims, family metrics, or cross-epoch references (`@current`, `@prev`, `@initial`).
-4. **`assert` (Verification):** Boolean invariant that must evaluate to `true` for dependent bindings to verify or sync.
+4. **`assert` (Verification):** Boolean invariant that must evaluate to `true` for dependent bindings to verify or sync. A binding *depends* on an assertion when they read the same evidence: the producers and constants an expression reaches, following `derive` expressions and family derivations transitively. A failing assertion therefore holds back only those bindings; `cw sync` still patches unrelated locations, reports the held ones, and exits `1`.
 
 ### 4.3 Claim Addressing Grammar
 ```ebnf
@@ -193,13 +193,14 @@ NamedFormat ::= "auto_iec" | "auto_time" | "pow2" | "neg_pow2" | "hex8" ;
 Literal     ::= <any text; "{{" and "}}" escape braces> ;
 ```
 
-1. **Units live inside the braces.** The unit selects the scaling from canonical storage (§4.1), so `{:.2f s}` renders a `Duration` stored as `8.55e9 ns` as `8.55 s`. Text *after* the closing brace is a plain literal and never scales anything. For `Duration`, `Bytes`, `Throughput`, and `Quantity<U>`, a numeric spec without a unit, or with a unit invalid for the type, is a compile-time error (`CW2005`). `Count`, `Cycles`, `Ratio`, and `PassRatio` may omit the unit and render in canonical units.
+1. **Units live inside the braces.** The unit selects the scaling from canonical storage (§4.1), so `{:.2f s}` renders a `Duration` stored as `8.55e9 ns` as `8.55 s`. Text *after* the closing brace is a plain literal and never scales anything. A unit in square brackets scales without being rendered: `{:.3f [ms]}` renders `406.266` for the bare-number cells of a `Time (ms)` column, and is type-checked like any other unit. For `Duration`, `Bytes`, `Throughput`, and `Quantity<U>`, a numeric spec without a unit, or with a unit invalid for the type, is a compile-time error (`CW2005`). `Count`, `Cycles`, `Ratio`, and `PassRatio` may omit the unit and render in canonical units.
 2. **Whitespace inside the spec is rendered verbatim.** `{:.0f k cycles/s}` renders `476 k cycles/s` (the `BENCHMARKS.md` style) and `{:.0fk cycles/s}` renders `491k cycles/s` (the `README.md` style). The same claim can feed both documents with different patterns.
 3. **Scaling units.** `%` multiplies a `Ratio` by 100 and `×`/`x` by 1. `k`, `M`, `KiB`, `MiB`, and `GiB` are fixed scale factors, as listed in §4.1.
 4. **Named formats.** `auto_iec` picks the largest IEC unit with magnitude ≥ 1 and renders two significant digits without ever truncating the integer part (`16 MiB`, `8.3 GiB`, `112 MiB`). `pow2` renders `2^k` and raises `CW3004` if the value is not an exact power of two.
 5. **Rounding.** `half_to_even` is applied exactly once, at the display boundary (Invariant 4).
-6. **Invertibility (`CW1007`).** Each placeholder compiles to a regular language: a numeric portion over `[0-9,.+\-e]` followed by its unit (a fixed string, or a finite prefix-free set for `auto_iec`/`auto_time`). A whole pattern is accepted only if its compiled matcher is **unambiguous**, meaning every matching string has exactly one parse. The compiler checks this on the pattern's automaton. In practice, every numeric portion must be followed (by its own unit or by literal text) by a character outside the numeric alphabet. So `{passed}/{total}` and `{verify_wall:.0f ms} ({verify_rss:.0f MiB})` are valid, while `{a}{b}` is rejected.
-7. **Equality is rendered-bytes equality.** A location is *in sync* if and only if rendering the current claim value produces exactly the bytes in the file (after decorator stripping, §5.2.2). Parsed numbers are used only for `cw adopt` bootstrapping and diff reporting, never to decide freshness. This avoids false "out of sync" reports caused by display rounding (`8.55 s` parsed back is not equal to `8.5512 s` evidence).
+6. **Invertibility (`CW1007`).** Each placeholder compiles to a regular language: an optionally signed digit run, where `,` and `.` continue the number only when a digit follows them, and `e`/`E` only when an optionally signed digit follows, then its unit (a fixed string, or a finite prefix-free set for `auto_iec`/`auto_time`). A whole pattern is accepted only if every matching string has exactly one parse. In practice, the text after a numeric portion (its own unit, or the next literal) must not be able to continue it. So `{passed}/{total}`, `{n}-file`, `{p}/{t}.` and `{verify_wall:.0f ms} ({verify_rss:.0f MiB})` are valid, while `{a}{b}`, `{a}.{b}` and `{n}5` are rejected.
+7. **Declared formats are inherited.** A placeholder written without a spec (`{matmul.tile_vs_article}`, or a bare family field `{share}` in a family table) renders and parses with that claim's declared `format:`, including the format's literals (`~`, `×`), exactly as an inline span of the claim would.
+8. **Equality is rendered-bytes equality.** A location is *in sync* if and only if rendering the current claim value produces exactly the bytes in the file (after decorator stripping, §5.2.2). Parsed numbers are used only for `cw adopt` bootstrapping and diff reporting, never to decide freshness. This avoids false "out of sync" reports caused by display rounding (`8.55 s` parsed back is not equal to `8.5512 s` evidence).
 
 ---
 
@@ -553,9 +554,17 @@ Before `cw sync` overwrites any inline span, table cell, or block pattern line, 
 - **Precedence:** `CW4001` means *the file disagrees with the lock* (a human edited it). `CW3003` means *the file matches the lock but the claim has moved* (evidence changed and `cw sync` has not run). When both apply, only `CW4001` is reported, because the human edit must be resolved first.
 
 ### 8.3 Context Window Anchoring (`CW4002`)
-For every inline span and table row, `context_digest` hashes the normalized text of the enclosing sentence/line (excluding owned spans).
+For every inline span and table row, `context_digest` hashes the normalized text of the enclosing sentence/line (excluding owned spans). For a table cell, the context is the cell's column header plus every cell of its row that no lens location owns, so renaming a row, editing a `Notes` cell, or changing a header unit (`Time (ms)` → `Time (s)`) drifts it. Table drift is reported once per table, listing the affected rows and columns.
 - If a developer edits `At T = 2^22, throughput is ... (test)` to `At T = 2^24, throughput is ... (test)`, `context_digest` changes while the span binding still points to `T = 2^22`.
 - `cw check` emits `CW4002 (Surrounding Context Drift)` so the author either updates the binding or acknowledges the prose edit (`cw sync --ack-context`).
+
+### 8.4 Coverage Auditing (`CW2003`, `CW4003`)
+A binding that silently disappears is as dangerous as a wrong number: the verified set shrinks while `cw check` stays green. `cw check` therefore fails when:
+- a lens declared in `claims.yaml` has no directive in its declared `file` (or its directive sits in another file) — `CW2003`, located at the lens's YAML key;
+- a declared checklist/transposed row matches no Markdown row, or a declared column is not a header of the table — `CW2003`;
+- a location recorded in `evidence.lock.json` (a deleted inline span, a removed row) no longer exists — `CW4003`. `cw sync` prunes such entries and reports each one, so the removal shows up in review as a lockfile change.
+
+Markdown discovery covers every Markdown file in the work tree (`git ls-files`, honouring `.gitignore`), not only `README.md` and `docs/`.
 
 ---
 
@@ -592,7 +601,7 @@ For every inline span and table row, `context_digest` hashes the normalized text
 | `CW1xxx` | Syntax & CST | `CW1001` Malformed marker · `CW1002` Nested span · `CW1003` Mismatched close tag · `CW1004` Unclosed span · `CW1005` Malformed GFM table under `cw:table` · `CW1006` Unmatched `cw:block` line pattern · `CW1007` Ambiguous (non-invertible) format pattern · `CW1008` Unescaped pipe splits a code span in a GFM table |
 | `CW2xxx` | Types & Scope | `CW2001` Dimensional unit mismatch · `CW2002` Dependency cycle · `CW2003` Unresolved claim/table key · `CW2004` Incompatible scope in derivation · `CW2005` Missing or invalid unit in format spec · `CW2104` Missing evidence record for non-sentinel cell |
 | `CW3xxx` | Verification & Freshness | `CW3001` Stale evidence (semantic input digest changed) · `CW3002` Assertion failed (`assert` is `false`) · `CW3003` Markdown value out of sync with claim · `CW3004` Value not representable in format (e.g. `pow2` of a non-power of two) |
-| `CW4xxx` | Conflict & Context | `CW4001` Unapproved manual edit inside owned span/cell/block · `CW4002` Surrounding prose context drifted from locked `context_digest` |
+| `CW4xxx` | Conflict & Context | `CW4001` Unapproved manual edit inside owned span/cell/block · `CW4002` Surrounding prose context drifted from locked `context_digest` · `CW4003` Locked location no longer present in Markdown |
 
 ---
 

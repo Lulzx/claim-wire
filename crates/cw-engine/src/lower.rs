@@ -10,10 +10,10 @@ use cw_ir::{
     resolve_family_field_type,
 };
 use cw_syntax::{
-    ByteRange, CanonicalValue, ClaimRef, Diagnostic, DiagnosticCode, FormatPattern, GfmCell,
-    GfmRow, MarkdownDocument, OuterDecorator, PatternSegment, Selector, TableLensNode, ValueType,
-    blake3_prefixed, canonicalize_table_key, compute_text_context_digest, format_scope_bracketed,
-    parse_row_override_key,
+    ByteRange, CanonicalValue, ClaimRef, Diagnostic, DiagnosticCode, FormatPattern, FormatSpec,
+    GfmCell, GfmRow, MarkdownDocument, OuterDecorator, PatternSegment, Selector, TableLensNode,
+    ValueType, blake3_prefixed, canonicalize_table_key, compute_text_context_digest,
+    format_scope_bracketed, parse_row_override_key,
 };
 use indexmap::{IndexMap, IndexSet};
 use std::fs;
@@ -57,6 +57,9 @@ pub struct BoundLocation {
     pub current_text: String,
     pub expected_text: String,
     pub context_digest: String,
+    /// A pre-0.4.1 `context_digest` formula still accepted for this location, so upgrading `cw`
+    /// does not turn every locked table cell into `CW4002`; the next `cw sync` rewrites it.
+    pub legacy_context_digest: Option<String>,
     pub kind: LocationKind,
     /// Canonical claim references (`guest_bench[radix-sort-u64, test].prove_wall`) that feed this location
     pub referenced_claims: Vec<String>,
@@ -356,6 +359,7 @@ fn lower_inline_span(
         current_text: span_node.current_text.clone(),
         expected_text,
         context_digest: span_node.context_digest.clone(),
+        legacy_context_digest: None,
         kind: LocationKind::InlineSpan {
             claim_ref: canonical_ref.clone(),
         },
@@ -394,7 +398,9 @@ fn lower_block_lens(
     }
 
     for (pat_idx, pat_str) in block_decl.lines.iter().enumerate() {
-        let pat = match FormatPattern::parse(pat_str) {
+        let pat = match FormatPattern::parse(pat_str)
+            .and_then(|p| inherit_claim_formats(p, |t| claim_default_format(t, ir, None)))
+        {
             Ok(p) => p,
             Err(mut d) => {
                 d.file = Some(doc.file.clone());
@@ -405,10 +411,8 @@ fn lower_block_lens(
         };
 
         // Find matching lines inside `block_node.lines`
-        let mut matched_slices = Vec::new();
-        for line_slice in &block_node.lines {
-            let line_str = &doc.source[line_slice.start..line_slice.content_end];
-            let parse_res = pat.reverse_parse(line_str, |target| {
+        let reverse_parse = |line_str: &str| {
+            pat.reverse_parse(line_str, |target| {
                 let Some(t) = target else {
                     return Err(Diagnostic::error(
                         DiagnosticCode::CW2003,
@@ -417,7 +421,12 @@ fn lower_block_lens(
                 };
                 let cref = ClaimRef::parse(t)?;
                 resolve_claim_ref_type(&cref, &ir.config, None, false)
-            });
+            })
+        };
+        let mut matched_slices = Vec::new();
+        for line_slice in &block_node.lines {
+            let line_str = &doc.source[line_slice.start..line_slice.content_end];
+            let parse_res = reverse_parse(line_str);
             if parse_res.is_ok() {
                 matched_slices.push(line_slice);
             }
@@ -450,8 +459,11 @@ fn lower_block_lens(
                     diag = diag.with_location(&doc.file, l.line_no, 1).with_snippet(
                         text,
                         text.len(),
-                        "closest line; it no longer matches the pattern",
+                        "closest line, but it does not match the pattern",
                     );
+                    if let Err(why) = reverse_parse(text) {
+                        diag = diag.with_note(format!("mismatch: {}", why.message));
+                    }
                 }
                 diag = diag.with_help(
                     "if the prose was reworded or rewrapped, update this line in `.claimwire/claims.yaml` `blocks:`; patterns match whole lines",
@@ -512,6 +524,7 @@ fn lower_block_lens(
             current_text: current_line_str,
             expected_text: expected_line_str,
             context_digest: ctx_digest,
+            legacy_context_digest: None,
             kind: LocationKind::BlockLine {
                 lens_id: block_node.lens_id.clone(),
                 pattern_idx: pat_idx,
@@ -627,6 +640,7 @@ fn lower_table_lens(
         }
     }
 
+    let first_location = locations.len();
     match table_decl.mode {
         TableMode::Records => lower_records_table(
             &doc.file,
@@ -658,6 +672,36 @@ fn lower_table_lens(
             locations,
             diagnostics,
         ),
+    }
+
+    // §8.3 context for a table cell: its column header plus every cell of its row that no lens
+    // location owns. Rewording a row label or a `Notes` cell, or changing the header's unit
+    // (`Time (ms)` → `Time (s)`), drifts the context of each number in that row/column.
+    let owned: IndexSet<usize> = locations[first_location..]
+        .iter()
+        .map(|l| l.byte_range.start)
+        .collect();
+    for loc in &mut locations[first_location..] {
+        let Some(row) = std::iter::once(&table_node.header)
+            .chain(&table_node.rows)
+            .find(|r| r.line_no == loc.line)
+        else {
+            continue;
+        };
+        let header = row
+            .cells
+            .iter()
+            .find(|c| c.content_range.start == loc.byte_range.start)
+            .and_then(|c| table_node.header.cells.get(c.col_idx))
+            .map_or("", |h| h.text.as_str());
+        let free: Vec<&str> = row
+            .cells
+            .iter()
+            .filter(|c| !owned.contains(&c.content_range.start))
+            .map(|c| c.text.as_str())
+            .collect();
+        loc.context_digest =
+            compute_text_context_digest(&format!("{header} :: {}", free.join(" | ")));
     }
 }
 
@@ -1117,7 +1161,9 @@ fn bind_single_table_cell(
     locations: &mut Vec<BoundLocation>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let pat = match FormatPattern::parse(pat_str) {
+    let pat = match FormatPattern::parse(pat_str)
+        .and_then(|p| inherit_claim_formats(p, |t| claim_default_format(t, ir, family_ctx)))
+    {
         Ok(p) => p,
         Err(mut d) => {
             d.file = Some(file.to_string());
@@ -1169,7 +1215,8 @@ fn bind_single_table_cell(
                 line_text: row.raw_line.clone(),
                 current_text: cell.text.clone(),
                 expected_text: cell.text.clone(),
-                context_digest: ctx_digest,
+                context_digest: ctx_digest.clone(),
+                legacy_context_digest: Some(ctx_digest.clone()),
                 kind: LocationKind::TableCell {
                     lens_id: lens_id.to_string(),
                     row_label: row_label.to_string(),
@@ -1217,7 +1264,8 @@ fn bind_single_table_cell(
         line_text: row.raw_line.clone(),
         current_text: cell.text.clone(),
         expected_text,
-        context_digest: ctx_digest,
+        context_digest: ctx_digest.clone(),
+        legacy_context_digest: Some(ctx_digest),
         kind: LocationKind::TableCell {
             lens_id: lens_id.to_string(),
             row_label: row_label.to_string(),
@@ -1352,6 +1400,92 @@ fn default_format_for_claim_ref(cref: &ClaimRef, ir: &CheckedIr) -> Option<Strin
     }
 }
 
+/// The declared `format:` of a placeholder target: a claim/constant/family reference, or (inside a
+/// family table) a bare metric or derivation name of that family.
+fn claim_default_format(
+    target: &str,
+    ir: &CheckedIr,
+    family_ctx: Option<(&str, &FamilyDecl)>,
+) -> Option<String> {
+    if let Some((_, fam)) = family_ctx {
+        let field = target
+            .strip_prefix('@')
+            .and_then(|t| t.split_once('.'))
+            .map_or(target, |(_, f)| f);
+        if let Some(fmt) = fam
+            .metrics
+            .get(field)
+            .and_then(|m| m.format.clone())
+            .or_else(|| fam.derivations.get(field).and_then(|d| d.format.clone()))
+        {
+            return Some(fmt);
+        }
+    }
+    ClaimRef::parse(target)
+        .ok()
+        .and_then(|cref| default_format_for_claim_ref(&cref, ir))
+}
+
+/// A placeholder written without a spec (`{matmul.tile_vs_article}`) renders and parses with the
+/// claim's declared `format:` (`{:.2fx}`), exactly as an inline span of that claim would; the
+/// format's own literals (`~`, ` TFLOP/s`) are spliced in. Without this, block lines and table
+/// cells fell back to a bare number and could not match text the span form accepts.
+fn inherit_claim_formats<F>(pat: FormatPattern, lookup: F) -> Result<FormatPattern, Diagnostic>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let mut segments: Vec<PatternSegment> = Vec::new();
+    let mut changed = false;
+    let push = |segments: &mut Vec<PatternSegment>, seg: PatternSegment| match (
+        segments.last_mut(),
+        seg,
+    ) {
+        (Some(PatternSegment::Literal(prev)), PatternSegment::Literal(lit)) => prev.push_str(&lit),
+        (_, seg) => segments.push(seg),
+    };
+    for seg in pat.segments {
+        let inherited = match &seg {
+            PatternSegment::Placeholder(ph) if ph.spec == FormatSpec::default() => ph
+                .target
+                .as_deref()
+                .and_then(&lookup)
+                .and_then(|fmt| FormatPattern::parse(&fmt).ok())
+                .map(|fmt| (ph.target.clone(), fmt)),
+            _ => None,
+        };
+        match inherited {
+            Some((target, fmt)) => {
+                changed = true;
+                for inner in fmt.segments {
+                    push(
+                        &mut segments,
+                        match inner {
+                            PatternSegment::Placeholder(mut p) => {
+                                p.target = p.target.or_else(|| target.clone());
+                                PatternSegment::Placeholder(p)
+                            }
+                            lit => lit,
+                        },
+                    );
+                }
+            }
+            None => push(&mut segments, seg),
+        }
+    }
+    if !changed {
+        return Ok(FormatPattern {
+            raw: pat.raw,
+            segments,
+        });
+    }
+    let expanded = FormatPattern {
+        raw: pat.raw,
+        segments,
+    };
+    expanded.validate_invertibility()?;
+    Ok(expanded)
+}
+
 fn default_format_for_type(ty: &ValueType) -> String {
     match ty {
         ValueType::Duration => "{:.2f s}".to_string(),
@@ -1381,6 +1515,9 @@ pub fn audit_locations(
     ack_context: bool,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
+    // Table cells drift together (a header rename touches every row), so CW4002 for tables is
+    // reported once per table rather than once per cell.
+    let mut table_drift: IndexMap<(String, String), Vec<&BoundLocation>> = IndexMap::new();
 
     for loc in locations {
         let cur_digest = blake3_prefixed(loc.current_text.as_bytes());
@@ -1408,25 +1545,34 @@ pub fn audit_locations(
                     );
                 }
 
-                if !ack_context && locked_loc.context_digest != loc.context_digest {
-                    diagnostics.push(
-                        Diagnostic::error(
-                            DiagnosticCode::CW4002,
-                            format!(
-                                "Surrounding prose context drifted from locked `context_digest` around `{}`",
-                                loc.id
+                let drifted = !ack_context
+                    && locked_loc.context_digest != loc.context_digest
+                    && loc.legacy_context_digest.as_ref() != Some(&locked_loc.context_digest);
+                if drifted {
+                    match &loc.kind {
+                        LocationKind::TableCell { lens_id, .. } => table_drift
+                            .entry((loc.file.clone(), lens_id.clone()))
+                            .or_default()
+                            .push(loc),
+                        _ => diagnostics.push(
+                            Diagnostic::error(
+                                DiagnosticCode::CW4002,
+                                format!(
+                                    "Surrounding prose context drifted from locked `context_digest` around `{}`",
+                                    loc.id
+                                ),
+                            )
+                            .with_location(&loc.file, loc.line, loc.col)
+                            .with_snippet(
+                                &loc.line_text,
+                                loc.current_text.len(),
+                                "surrounding prose changed while claim binding remained unchanged",
+                            )
+                            .with_help(
+                                "update the claim binding if the statement changed, or run `cw sync --ack-context` to acknowledge the prose edit",
                             ),
-                        )
-                        .with_location(&loc.file, loc.line, loc.col)
-                        .with_snippet(
-                            &loc.line_text,
-                            loc.current_text.len(),
-                            "surrounding prose changed while claim binding remained unchanged",
-                        )
-                        .with_help(
-                            "update the claim binding if the statement changed, or run `cw sync --ack-context` to acknowledge the prose edit",
                         ),
-                    );
+                    }
                 }
             }
         }
@@ -1455,32 +1601,38 @@ pub fn audit_locations(
                 diag.notes.push(ev_note);
             }
 
-            // Attach cross-reference note (`= also rendered at: ...`)
-            let other_locs: Vec<&BoundLocation> = locations
+            // Attach cross-reference note (`= also rendered at: ...`): one entry per file:line
+            // (a table row or block line can render the claim several times), capped so a
+            // widely quoted claim doesn't bury the diagnostic.
+            const MAX_LISTED: usize = 8;
+            let mut others: IndexMap<(String, usize), (String, bool)> = IndexMap::new();
+            for ol in locations
                 .iter()
-                .filter(|other| {
-                    other.id != loc.id && other.referenced_claims.contains(&primary_claim)
-                })
-                .collect();
-            if !other_locs.is_empty() {
+                .filter(|o| o.id != loc.id && o.referenced_claims.contains(&primary_claim))
+            {
+                let entry = others
+                    .entry((ol.file.clone(), ol.line))
+                    .or_insert_with(|| (ol.kind.short_description(), true));
+                entry.1 &= ol.current_text == ol.expected_text;
+            }
+            if !others.is_empty() {
                 let mut lines = Vec::new();
-                for (i, ol) in other_locs.iter().enumerate() {
-                    let status_mark = if ol.current_text == ol.expected_text {
-                        "✓"
+                for (i, ((file, line), (desc, ok))) in others.iter().take(MAX_LISTED).enumerate() {
+                    let coord = format!("{file}:{line}");
+                    let desc = format!("({desc})");
+                    let mark = if *ok { "✓" } else { "✗" };
+                    let lead = if i == 0 {
+                        "also rendered at: "
                     } else {
-                        "✗"
+                        "                  "
                     };
-                    let coord = format!("{}:{}", ol.file, ol.line);
-                    let desc = format!("({})", ol.kind.short_description());
-                    if i == 0 {
-                        lines.push(format!(
-                            "also rendered at: {coord:<22} {desc:<33} {status_mark}"
-                        ));
-                    } else {
-                        lines.push(format!(
-                            "                  {coord:<22} {desc:<33} {status_mark}"
-                        ));
-                    }
+                    lines.push(format!("{lead}{coord:<22} {desc:<33} {mark}"));
+                }
+                if others.len() > MAX_LISTED {
+                    lines.push(format!(
+                        "                  … and {} more locations",
+                        others.len() - MAX_LISTED
+                    ));
                 }
                 diag.notes.push(lines.join("\n"));
             }
@@ -1488,6 +1640,41 @@ pub fn audit_locations(
             diag.help = Some("run `cw sync` to rewrite this span from evidence".to_string());
             diagnostics.push(diag);
         }
+    }
+
+    for ((file, lens_id), cells) in table_drift {
+        let first = cells[0];
+        let mut rows: Vec<usize> = cells.iter().map(|c| c.line).collect();
+        rows.dedup();
+        let mut columns: Vec<&str> = cells
+            .iter()
+            .filter_map(|c| match &c.kind {
+                LocationKind::TableCell { col_label, .. } => Some(col_label.as_str()),
+                _ => None,
+            })
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .collect();
+        columns.sort_unstable();
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::CW4002,
+                format!(
+                    "Header or row text around {} bound cell(s) of table `{lens_id}` changed while the bindings did not",
+                    cells.len()
+                ),
+            )
+            .with_location(&file, first.line, first.col)
+            .with_snippet(&first.line_text, first.current_text.len(), "row or column header changed")
+            .with_note(format!(
+                "rows on lines {}",
+                rows.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", ")
+            ))
+            .with_note(format!("columns: {}", columns.join(", ")))
+            .with_help(
+                "if a label or unit changed the meaning (`Time (ms)` → `Time (s)`), update the lens in `.claimwire/claims.yaml`; otherwise run `cw sync --ack-context`",
+            ),
+        );
     }
 
     diagnostics

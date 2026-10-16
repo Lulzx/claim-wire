@@ -6,7 +6,7 @@ description: Agent skill for bootstrapping, wiring, and repairing Claim Wire (cw
 # Claim Wire (`cw`) Agent Skill
 
 Claim Wire is a two-phase verification and synchronization system for quantitative engineering claims in Markdown documentation:
-1. **Phase 1 (Probabilistic Discovery — Agent Skill + Human Review):** Scan existing Markdown files (`README.md`, `docs/**/*.md`) for empirical metrics, deduplicate repeated measurements into parameterized **Claim Families**, author `.claimwire/evidence.yaml` and `.claimwire/claims.yaml`, place lightweight lenses (`<!-- cw:table <id> -->`, `<!-- cw:block <id> -->`, `<!-- cw:<ref> -->`), and run `cw adopt` to initialize `.claimwire/evidence.lock.json` with zero byte diffs.
+1. **Phase 1 (Probabilistic Discovery — Agent Skill + Human Review):** Scan existing Markdown files (every `*.md` in the work tree: `README.md`, `docs/**`, per-demo READMEs) for empirical metrics, deduplicate repeated measurements into parameterized **Claim Families**, author `.claimwire/evidence.yaml` and `.claimwire/claims.yaml`, place lightweight lenses (`<!-- cw:table <id> -->`, `<!-- cw:block <id> -->`, `<!-- cw:<ref> -->`), and run `cw adopt` to initialize `.claimwire/evidence.lock.json` with zero byte diffs.
 2. **Phase 2 (Deterministic Maintenance — `cw` Rust Compiler, Zero LLM):** The `cw` binary deterministically checks, evaluates, audits, and patches Markdown from immutable run manifests.
 
 ---
@@ -17,7 +17,7 @@ Claim Wire is a two-phase verification and synchronization system for quantitati
 2. **Non-Interference:** Bytes outside Claim Wire's owned spans, mapped table cells, and block pattern slots are never modified.
 3. **No Silent Weakening:** Never weaken a `const` bound, `assert` invariant, or surrounding prose context (`CW4002`) to hide a regression (`CW3002`). Always surface regressions to the human maintainer.
 4. **Single-Rounding Determinism:** All derivations (`speedup`, `throughput`, `share`, `prefix_sum`) are evaluated in full `f64` / `i64` precision from canonical units (`ns`, `B`, `cycles`) and rounded (`half_to_even`) once at the display boundary.
-5. **Units Inside Braces:** Every format specification for `Duration`, `Bytes`, and `Throughput` must place the scaling unit **inside** the braces (`{prove_wall:.2f s}`, `{proof_size:, B}`, `{throughput:.0f k cycles/s}`). Putting a unit outside the braces is a `CW2005` error.
+5. **Units Inside Braces:** Every format specification for `Duration`, `Bytes`, and `Throughput` must place the scaling unit **inside** the braces (`{prove_wall:.2f s}`, `{proof_size:, B}`, `{throughput:.0f k cycles/s}`). Putting a unit outside the braces is a `CW2005` error. When a table header already carries the unit (`Time (ms)`) and cells hold bare numbers, use a hidden unit: `{time:.3f [ms]}` scales by ms without printing it.
 
 ---
 
@@ -28,6 +28,7 @@ When auditing a Markdown repository, classify every number into one of four buck
 - **`const` (Specification / Paper Bound):** Fixed protocol parameters or external paper figures (`paper.t22.proof_size_max: { type: Bytes, value: "599 KiB" }`).
 - **`source` / `family` (Measured Observation):** Empirical outputs from benchmarks, test runners, or validation scripts (`guest_bench[workload, profile]`, `phase_bench[phase]`, `inventory.rust_tests`).
 - **`derive` (Pure Formula):** Values computed from other claims or epochs (`cycles / prove_wall`, `sum(phase_bench[*].duration)`, `prefix_sum(duration)`). Never store derived ratios as independent raw sources if their operands are already tracked.
+- **Recorded run vs. current manifest:** "passed 185/185 on 2026-08-29" is a fact about a dated run, not about today's manifest. Bind the denominator *of the manifest* to a producer that counts it, record the dated run's result as a `const` (or a producer over the checked-in result file), and add an `assert` that the run still covers the manifest (`phase4.recorded_pass == phase4.total`). When the manifest grows, the assertion fails instead of `cw sync` silently rewriting "passed 185/185" to "passed 190/190".
 - **Ignore (Structural Prose):** Section numbers, RFC numbers, dates, bit-widths (`GF(2^128)`, `SHA-256`, `RV64I`), and CLI flags.
 
 ### Step 2: Deduplicate into Parameterized Claim Families
@@ -79,8 +80,9 @@ families:
 | `CW2001..CW2005` | Type, Cycle, Scope, or Unit Error | Align dimensional types (`Cycles / Duration -> Throughput`), add `sum`/`min`/`max` over wildcard/subset selectors, and move units inside braces (`{:.2f s}`). |
 | `CW2104` | Missing Evidence Key | Either add the missing scope/metric to the producer's `@cw:record` output or add the cell's placeholder string (`—`, `N/A`, `exact`) to the table lens's `sentinels` list. |
 | `CW3001` | Stale Evidence | Re-run the producer via `cw capture --producer <id> -- <cmd>` (or inspect impacted claims with `cw impact`), then run `cw sync`. |
-| `CW3002` | Assertion Failed | **Stop and report to the user.** Do not weaken the assertion or constant bound in `.claimwire/claims.yaml` without explicit maintainer approval. |
+| `CW3002` | Assertion Failed | **Stop and report to the user.** Do not weaken the assertion or constant bound in `.claimwire/claims.yaml` without explicit maintainer approval. `cw sync` still patches locations that do not read the asserted evidence and lists the held ones. |
 | `CW3003` | Out of Sync | Run `cw sync` to deterministically patch the outdated Markdown spans/tables/blocks from current evidence. |
 | `CW3004` | Non-Power-of-Two Value | Either switch the format spec from `:pow2` to `{:,}` or fix the upstream cycle count. |
 | `CW4001` | Manual Edit Conflict | Inspect whether the human intentionally edited the number in Markdown. Run `cw sync --force` to restore from evidence, or update the upstream constant/evidence if intentional. |
+| `CW4003` | Locked Location Removed | A span, row, or block line recorded in the lockfile no longer exists. Restore it if the removal was accidental; otherwise run `cw sync` (it prunes and reports the entry) and commit the lockfile change. |
 | `CW4002` | Surrounding Context Drift | Inspect the surrounding sentence/row edit. If the prose change altered the claim's meaning (e.g. `T = 2^22` $\rightarrow$ `T = 2^24`), update the claim binding; if it was a harmless copy-edit, run `cw sync --ack-context`. |

@@ -384,7 +384,8 @@ fn cmd_sync(workspace_root: &Path, args: &[String], s: &Styler, quiet: bool) -> 
             print!("{}", style_diagnostic(&d.format_human(), s));
         }
     }
-    if has_err {
+    // A failed assertion still lets unrelated locations sync; report those writes before failing.
+    if has_err && report.patched_items.is_empty() && report.pruned_locations.is_empty() {
         return Ok(1);
     }
 
@@ -423,6 +424,13 @@ fn cmd_sync(workspace_root: &Path, args: &[String], s: &Styler, quiet: bool) -> 
             );
         }
 
+        for id in &report.held_locations {
+            println!(
+                "held     {}   {}",
+                s.yellow_bold(id),
+                s.dim("(reads evidence guarded by a failing assertion; not patched)")
+            );
+        }
         let prune_verb = if dry_run { "would prune" } else { "pruned" };
         for id in &report.pruned_locations {
             println!(
@@ -478,7 +486,7 @@ fn cmd_sync(workspace_root: &Path, args: &[String], s: &Styler, quiet: bool) -> 
         }
     }
 
-    Ok(0)
+    Ok(if has_err { 1 } else { 0 })
 }
 
 fn cmd_adopt(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8> {
@@ -591,10 +599,18 @@ fn cmd_capture(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
         .collect();
     let total_records: usize =
         manifest.families.values().map(|v| v.len()).sum::<usize>() + manifest.scalars.len();
-    let summary = if fam_counts.is_empty() {
-        format!("{} scalar metrics", manifest.scalars.len())
+    // A producer may emit both family records and scalars; list both.
+    let mut summary_parts = fam_counts;
+    match manifest.scalars.len() {
+        0 => {}
+        1 => summary_parts.push("1 scalar metric".to_string()),
+        n => summary_parts.push(format!("{n} scalar metrics")),
+    }
+    let summary = summary_parts.join(", ");
+    let records_word = if total_records == 1 {
+        "record"
     } else {
-        fam_counts.join(", ")
+        "records"
     };
     let elapsed_ms = started.elapsed().as_millis();
     let badge = if s.is_colored() {
@@ -609,7 +625,7 @@ fn cmd_capture(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
             "unchanged".to_string()
         };
         println!(
-            "{badge} inputs and {} records match existing run → {}  {}",
+            "{badge} inputs and {} {records_word} match existing run → {}  {}",
             s.green_bold(&total_records.to_string()),
             s.cyan_bold(&manifest_rel),
             s.dim(&format!("(@current · {elapsed_ms}ms)"))
@@ -617,7 +633,7 @@ fn cmd_capture(workspace_root: &Path, args: &[String], s: &Styler) -> Result<u8>
         return Ok(0);
     }
     println!(
-        "{badge} {} records ({summary}) → {}  {}",
+        "{badge} {} {records_word} ({summary}) → {}  {}",
         s.green_bold(&total_records.to_string()),
         s.cyan_bold(&manifest_rel),
         s.dim(&format!("(@current · {elapsed_ms}ms)"))

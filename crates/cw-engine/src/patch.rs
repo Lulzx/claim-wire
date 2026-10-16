@@ -153,6 +153,112 @@ pub fn load_workspace_pipeline(
     ))
 }
 
+/// The evidence a claim ultimately reads: `producer:<id>` for measured values and `const:<name>`
+/// for declared constants, following `derive` expressions and family derivations transitively.
+fn claim_feeds(claim_key: &str, ir: &CheckedIr) -> IndexSet<String> {
+    let mut out = IndexSet::new();
+    if let Ok(cref) = ClaimRef::parse(claim_key) {
+        ref_feeds(&cref, ir, &mut out, &mut IndexSet::new());
+    }
+    out
+}
+
+fn expr_feeds(expr: &Expr, ir: &CheckedIr) -> IndexSet<String> {
+    let mut out = IndexSet::new();
+    walk_expr_feeds(expr, ir, None, &mut out, &mut IndexSet::new());
+    out
+}
+
+fn ref_feeds(
+    cref: &ClaimRef,
+    ir: &CheckedIr,
+    out: &mut IndexSet<String>,
+    seen: &mut IndexSet<String>,
+) {
+    match cref {
+        ClaimRef::Scalar(s) => {
+            let name = s.canonical_string();
+            if !seen.insert(name.clone()) {
+                return;
+            }
+            if ir.config.constants.contains_key(&name) {
+                out.insert(format!("const:{name}"));
+            } else if let Some(decl) = ir.config.claims.get(&name) {
+                if let Some(prod) = &decl.producer {
+                    out.insert(format!("producer:{prod}"));
+                }
+                if let Some(expr) = decl.expr.as_deref().and_then(|e| parse_expr(e).ok()) {
+                    walk_expr_feeds(&expr, ir, None, out, seen);
+                }
+            }
+        }
+        ClaimRef::Family(fref) => family_field_feeds(&fref.family, &fref.field, ir, out, seen),
+    }
+}
+
+fn family_field_feeds(
+    family: &str,
+    field: &str,
+    ir: &CheckedIr,
+    out: &mut IndexSet<String>,
+    seen: &mut IndexSet<String>,
+) {
+    let Some(fam) = ir.config.families.get(family) else {
+        return;
+    };
+    out.insert(format!("producer:{}", fam.producer));
+    if !seen.insert(format!("{family}.{field}")) {
+        return;
+    }
+    if let Some(expr) = fam
+        .derivations
+        .get(field)
+        .and_then(|d| parse_expr(&d.expr).ok())
+    {
+        walk_expr_feeds(&expr, ir, Some(family), out, seen);
+    }
+}
+
+fn walk_expr_feeds(
+    expr: &Expr,
+    ir: &CheckedIr,
+    family: Option<&str>,
+    out: &mut IndexSet<String>,
+    seen: &mut IndexSet<String>,
+) {
+    match expr {
+        Expr::Ref(ClaimRef::Scalar(s)) => {
+            // Inside a family derivation a bare name is a sibling metric or derivation.
+            let name = s.canonical_string();
+            match family.filter(|fam| {
+                ir.config.families.get(*fam).is_some_and(|f| {
+                    f.metrics.contains_key(&name) || f.derivations.contains_key(&name)
+                })
+            }) {
+                Some(fam) => family_field_feeds(fam, &name, ir, out, seen),
+                None => ref_feeds(&ClaimRef::Scalar(s.clone()), ir, out, seen),
+            }
+        }
+        Expr::Ref(cref) => ref_feeds(cref, ir, out, seen),
+        Expr::Reduction { target, .. } => {
+            family_field_feeds(&target.family, &target.field, ir, out, seen)
+        }
+        Expr::EpochField { field, .. } | Expr::PrefixSum { field, .. } => {
+            if let Some(fam) = family {
+                family_field_feeds(fam, field, ir, out, seen);
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            walk_expr_feeds(lhs, ir, family, out, seen);
+            walk_expr_feeds(rhs, ir, family, out, seen);
+        }
+        Expr::UnaryNeg(e) | Expr::Not(e) | Expr::Round { expr: e, .. } => {
+            walk_expr_feeds(e, ir, family, out, seen)
+        }
+        Expr::Number(_) | Expr::Bool(_) => {}
+    }
+}
+
 /// Lockfile locations whose Markdown binding disappeared, as `(location id, file)`.
 /// Files that already carry an error (a broken lens, an unmatched block line) are skipped:
 /// that error explains the missing locations and fixing it brings them back.
@@ -174,7 +280,6 @@ fn vanished_locations(
         .filter(|d| d.severity == Severity::Error)
         .filter_map(|d| d.file.as_deref())
         .collect();
-    let has_config_error = errored_files.iter().any(|f| f.starts_with(".claimwire/"));
     lock.locations
         .keys()
         .filter(|id| !present.contains(id.as_str()))
@@ -193,8 +298,7 @@ fn vanished_locations(
                 return None;
             }
             let in_scope = explicit_files.is_none_or(|fs| fs.iter().any(|f| f == &file));
-            (in_scope && !has_config_error && !errored_files.contains(file.as_str()))
-                .then(|| (id.clone(), file))
+            (in_scope && !errored_files.contains(file.as_str())).then(|| (id.clone(), file))
         })
         .collect()
 }
@@ -299,6 +403,8 @@ pub struct SyncReport {
     pub lockfile_updated: bool,
     /// Lockfile locations dropped because their Markdown binding no longer exists.
     pub pruned_locations: Vec<String>,
+    /// Out-of-sync locations not patched because a failing assertion reads the same evidence.
+    pub held_locations: Vec<String>,
     /// Map of `rel_file -> (old_source, new_source)` for changed Markdown files.
     pub file_diffs: IndexMap<String, (String, String)>,
 }
@@ -327,6 +433,7 @@ pub fn run_sync_options(
             files_written: 0,
             lockfile_updated: false,
             pruned_locations: Vec::new(),
+            held_locations: Vec::new(),
             file_diffs: IndexMap::new(),
         });
     };
@@ -343,25 +450,60 @@ pub fn run_sync_options(
     );
     diagnostics.extend(audit_diags);
 
-    // If any error diagnostic is present (e.g. CW3002 assertion failure, CW4001 manual edit, CW4002 context drift, CW3001 stale error),
-    // abort sync without modifying any files!
-    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+    // Any error other than a failed assertion (CW4001 manual edit, CW4002 context drift, CW3001
+    // stale evidence, ...) aborts the sync without modifying any files. A failed assertion (CW3002)
+    // only holds back the locations fed by the same evidence (§4.2: "dependent bindings"), so an
+    // unrelated regression does not freeze every other number in the repository.
+    if diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error && d.code != DiagnosticCode::CW3002)
+    {
         return Ok(SyncReport {
             diagnostics,
             patched_items: Vec::new(),
             files_written: 0,
             lockfile_updated: false,
             pruned_locations: Vec::new(),
+            held_locations: Vec::new(),
             file_diffs: IndexMap::new(),
         });
     }
+
+    let held_feeds: IndexSet<String> = ctx
+        .eval
+        .assertions
+        .iter()
+        .filter(|(_, passed)| !**passed)
+        .filter_map(|(name, _)| ctx.ir.config.assertions.get(name))
+        .filter_map(|a| parse_expr(&a.expr).ok())
+        .flat_map(|e| expr_feeds(&e, &ctx.ir))
+        .collect();
+    let held_ids: IndexSet<&str> = if held_feeds.is_empty() {
+        IndexSet::new()
+    } else {
+        ctx.lowering
+            .locations
+            .iter()
+            .filter(|l| {
+                l.referenced_claims
+                    .iter()
+                    .any(|c| !claim_feeds(c, &ctx.ir).is_disjoint(&held_feeds))
+            })
+            .map(|l| l.id.as_str())
+            .collect()
+    };
 
     // Group patches per Markdown file
     let mut patches_by_file: IndexMap<String, Vec<(cw_syntax::ByteRange, String)>> =
         IndexMap::new();
     let mut patched_items = Vec::new();
+    let mut held_locations = Vec::new();
 
     for loc in &ctx.lowering.locations {
+        if loc.current_text != loc.expected_text && held_ids.contains(loc.id.as_str()) {
+            held_locations.push(loc.id.clone());
+            continue;
+        }
         if loc.current_text != loc.expected_text {
             patches_by_file
                 .entry(loc.file.clone())
@@ -395,10 +537,41 @@ pub fn run_sync_options(
     }
     let md_files_written = writes.len();
 
-    // Build updated lockfile
-    let (producers, evaluated_claims) =
+    // Build updated lockfile. Held locations, and the evidence behind them, keep their locked
+    // state so the next `cw check` still reports them until the assertion passes.
+    let (mut producers, mut evaluated_claims) =
         build_lockfile_claims_and_producers(&ctx.eval.display, &ctx.evidence);
-    let locations = build_locked_locations(&ctx.lowering.locations, true);
+    let mut locations = build_locked_locations(&ctx.lowering.locations, true);
+    if !held_feeds.is_empty() {
+        let old = ctx.lockfile.clone().unwrap_or_default();
+        let held_locs: Vec<BoundLocation> = ctx
+            .lowering
+            .locations
+            .iter()
+            .filter(|l| held_ids.contains(l.id.as_str()))
+            .cloned()
+            .collect();
+        let as_found = build_locked_locations(&held_locs, false);
+        for (id, found) in as_found {
+            let kept = old.locations.get(&id).cloned().unwrap_or(found);
+            locations.insert(id, kept);
+        }
+        for (prod_id, entry) in producers.iter_mut() {
+            if held_feeds.contains(&format!("producer:{prod_id}")) {
+                if let Some(prev) = old.producers.get(prod_id) {
+                    *entry = prev.clone();
+                }
+            }
+        }
+        let held_claim = |key: &str| !claim_feeds(key, &ctx.ir).is_disjoint(&held_feeds);
+        evaluated_claims
+            .retain(|key, _| !held_claim(key) || old.evaluated_claims.contains_key(key));
+        for (key, entry) in evaluated_claims.iter_mut() {
+            if held_claim(key) {
+                *entry = old.evaluated_claims[key].clone();
+            }
+        }
+    }
     let pruned_locations: Vec<String> = ctx
         .lockfile
         .as_ref()
@@ -437,6 +610,7 @@ pub fn run_sync_options(
         files_written: md_files_written,
         lockfile_updated: md_files_written > 0 || lockfile_changed,
         pruned_locations,
+        held_locations,
         file_diffs,
     })
 }

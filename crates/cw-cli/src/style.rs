@@ -409,6 +409,8 @@ impl Styler {
         let mut err = std::io::stderr();
         let _ = write!(err, "\x1b[?25l");
         let total = items.len();
+        // Cosmetic only: never let a large sync spend more than ~400 ms animating.
+        let duration_per_item_ms = duration_per_item_ms.min(400 / total as u64);
         for (idx, item) in items.iter().enumerate() {
             let frame = SPINNER_FRAMES[idx % SPINNER_FRAMES.len()];
             let bar = self.progress_bar(idx + 1, total, 20);
