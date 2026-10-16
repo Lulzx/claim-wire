@@ -1,5 +1,8 @@
 /target/
-/.claimwire/.cache/
-/.claimwire/.staging/
+
+# Claim Wire local state (unanchored so fixture workspaces are covered too)
+.claimwire/.cache/
+.claimwire/.staging/
+
 .DS_Store
 *.swp
