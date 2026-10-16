@@ -423,12 +423,25 @@ fn lower_block_lens(
                 resolve_claim_ref_type(&cref, &ir.config, None, false)
             })
         };
+        // A pattern matches a whole line (the original form, tried first so existing lockfile
+        // locations keep their ids and ranges) or, failing that, a fragment inside a line.
         let mut matched_slices = Vec::new();
         for line_slice in &block_node.lines {
             let line_str = &doc.source[line_slice.start..line_slice.content_end];
-            let parse_res = reverse_parse(line_str);
-            if parse_res.is_ok() {
-                matched_slices.push(line_slice);
+            if reverse_parse(line_str).is_ok() {
+                matched_slices.push((line_slice, 0..line_str.len()));
+                continue;
+            }
+            for (range, _) in pat.find_fragments(line_str, |target| {
+                let Some(t) = target else {
+                    return Err(Diagnostic::error(
+                        DiagnosticCode::CW2003,
+                        "Unnamed placeholder in block pattern",
+                    ));
+                };
+                resolve_claim_ref_type(&ClaimRef::parse(t)?, &ir.config, None, false)
+            }) {
+                matched_slices.push((line_slice, range));
             }
         }
 
@@ -437,7 +450,7 @@ fn lower_block_lens(
             let mut diag = Diagnostic::error(
                 DiagnosticCode::CW1006,
                 format!(
-                    "Block lens `{}` pattern #{pat_idx} matched {} lines in block (expected exactly 1): `{pat_str}`",
+                    "Block lens `{}` pattern #{pat_idx} matched {} times in block (expected exactly 1): `{pat_str}`",
                     block_node.lens_id,
                     matched_slices.len()
                 ),
@@ -466,17 +479,18 @@ fn lower_block_lens(
                     }
                 }
                 diag = diag.with_help(
-                    "if the prose was reworded or rewrapped, update this line in `.claimwire/claims.yaml` `blocks:`; patterns match whole lines",
+                    "if the prose was reworded or rewrapped, update this pattern in `.claimwire/claims.yaml` `blocks:`; a pattern may be just the fragment of a line around its numbers",
                 );
             } else {
-                diag = diag.with_help("make the pattern specific enough to match a single line");
+                diag = diag.with_help("add surrounding words to the pattern so it matches once");
             }
             diagnostics.push(diag);
             continue;
         }
 
-        let matched = matched_slices[0];
-        let current_line_str = doc.source[matched.start..matched.content_end].to_string();
+        let (matched, range) = matched_slices.swap_remove(0);
+        let line_str = doc.source[matched.start..matched.content_end].to_string();
+        let current_line_str = line_str[range.clone()].to_string();
         let mut referenced_claims = Vec::new();
 
         let expected_line_str = match pat.render(|target| {
@@ -499,7 +513,9 @@ fn lower_block_lens(
             }
         };
 
-        // Context digest for a block line is the digest of the literal segments of the pattern
+        // Context digest for a block line is the digest of the pattern's literal segments: the
+        // words the author chose to anchor. For a fragment, prose outside it is deliberately free
+        // to be rewrapped or reworded.
         let literal_skeleton: String = pat
             .segments
             .iter()
@@ -515,12 +531,12 @@ fn lower_block_lens(
             id: loc_id,
             file: doc.file.clone(),
             line: matched.line_no,
-            col: 1,
+            col: line_str[..range.start].chars().count() + 1,
             byte_range: ByteRange {
-                start: matched.start,
-                end: matched.content_end,
+                start: matched.start + range.start,
+                end: matched.start + range.end,
             },
-            line_text: current_line_str.clone(),
+            line_text: line_str,
             current_text: current_line_str,
             expected_text: expected_line_str,
             context_digest: ctx_digest,
@@ -1525,6 +1541,32 @@ pub fn audit_locations(
 
         if let Some(lock) = lockfile {
             if let Some(locked_loc) = lock.locations.get(&loc.id) {
+                // A block line's context is its pattern's literal skeleton, so a changed context
+                // means the lens definition changed, not the prose: report that once instead of
+                // a manual-edit conflict plus context drift.
+                if let LocationKind::BlockLine {
+                    lens_id,
+                    pattern_idx,
+                } = &loc.kind
+                    && !ack_context
+                    && locked_loc.context_digest != loc.context_digest
+                {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            DiagnosticCode::CW4002,
+                            format!(
+                                "Pattern #{pattern_idx} of block lens `{lens_id}` changed since it was locked"
+                            ),
+                        )
+                        .with_location(&loc.file, loc.line, loc.col)
+                        .with_snippet(&loc.line_text, loc.current_text.len(), "now matched here")
+                        .with_help(format!(
+                            "review the new binding, then run `cw adopt {}` to lock it",
+                            loc.file
+                        )),
+                    );
+                    continue;
+                }
                 if !force && locked_loc.rendered_digest != cur_digest {
                     has_cw4001 = true;
                     diagnostics.push(

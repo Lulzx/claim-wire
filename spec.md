@@ -272,7 +272,9 @@ blocks:
 ```
 The compiler compiles each line pattern into an unambiguous prefix/infix/suffix matcher (`"# Run Rust, Python, and RV64I conformance + fuzz suites ("` ... `" Rust, "` ... `" Python, "` ... `" ISA tests)"`), locates the matching line inside the block immediately following `<!-- cw:block readme.test_suite_comment -->`, and updates `362`, `227`, and `46` in place.
 - "The block" is the single CommonMark block (fenced code block, paragraph, list, or blockquote) that begins on the first non-blank line after the directive.
-- Each line pattern MUST match exactly one line in that block. Zero matches or more than one match is `CW1006`.
+- Each line pattern MUST match exactly once in that block. Zero matches or more than one match is `CW1006`; for zero matches the diagnostic points at the closest line and says why it does not match.
+- A pattern matches a whole line or, failing that, a **fragment** of one line: `"denominator passed {p}/{p} with zero skips"` binds just that text inside a longer wrapped line. Only the fragment is owned and patched, a fragment never starts or ends inside a number, and its context is the pattern's own literal text, so the prose around it can be reworded or rewrapped without `CW4002`. Prefer fragments for prose; reserve whole-line patterns for code blocks.
+- Editing a pattern changes its literal skeleton; `cw check` reports that once as `CW4002` ("pattern changed since it was locked") instead of a manual-edit conflict, and `cw adopt <file>` re-locks it.
 - Line patterns obey the same invertibility rules as format patterns (§4.5).
 
 ---

@@ -60,7 +60,7 @@ families:
    - Use `mode: transposed` when rows are metrics (`T (cycles, padded)`, `Prove (wall)`, `Peak memory`) and columns are scopes/epochs (`provable-120`, `test`, `Initial`).
    - Use `mode: checklist` when each row binds to a heterogeneous scalar or family claim (`bench.test_suites`, `bench.paper_comparison`, `bench.phase_breakdown`).
 2. **Fenced Code Blocks & Clean Prose (`<!-- cw:block <lens-id> -->`):**
-   Never place `<!-- cw:... -->` inside a fenced code block (```` ```sh ````) because CommonMark renders HTML comments inside code blocks as literal text. Place `<!-- cw:block <id> -->` immediately above the code fence and declare invertible line templates in `blocks:`.
+   Never place `<!-- cw:... -->` inside a fenced code block (```` ```sh ````) because CommonMark renders HTML comments inside code blocks as literal text. Place `<!-- cw:block <id> -->` immediately above the code fence and declare invertible line templates in `blocks:`. For prose paragraphs and lists, write each pattern as the *fragment* around its numbers (`"passed {p}/{t} with zero skips"`), not a copy of the whole wrapped line: fragments survive rewrapping, keep the YAML short, and only the fragment is ever patched. After editing a pattern, run `cw adopt <file>`.
 3. **Inline Prose Spans (`<!-- cw:<ref> -->...<!-- /cw -->`):**
    Use inline spans for numbers embedded in sentences (`<!-- cw:inventory.rust_crates -->16<!-- /cw -->`). Keep outer bold markers (`**...**`) outside the span when using default formats.
 

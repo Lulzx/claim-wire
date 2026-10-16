@@ -241,8 +241,76 @@ impl FormatPattern {
     pub fn reverse_parse<F>(
         &self,
         rendered: &str,
-        mut resolve_type: F,
+        resolve_type: F,
     ) -> Result<IndexMap<String, CanonicalValue>, Diagnostic>
+    where
+        F: FnMut(Option<&str>) -> Result<ValueType, Diagnostic>,
+    {
+        let (results, rest) = self.parse_prefix(rendered, resolve_type)?;
+        if !rest.is_empty() {
+            return Err(Diagnostic::error(
+                DiagnosticCode::CW3003,
+                format!(
+                    "Trailing unparsed text `{rest}` when matching `{rendered}` against `{}`",
+                    self.raw
+                ),
+            ));
+        }
+        Ok(results)
+    }
+
+    /// Every non-overlapping occurrence of this pattern inside `text`, as `(byte range, values)`.
+    /// Used by block lenses so a pattern may name just the fragment of a line that carries the
+    /// numbers; leading/trailing prose can then be reworded or rewrapped freely. A match never
+    /// starts or ends inside a number (`{n} tests` does not match the `62 tests` of `362 tests`).
+    pub fn find_fragments<F>(
+        &self,
+        text: &str,
+        mut resolve_type: F,
+    ) -> Vec<(std::ops::Range<usize>, IndexMap<String, CanonicalValue>)>
+    where
+        F: FnMut(Option<&str>) -> Result<ValueType, Diagnostic>,
+    {
+        let continues_number =
+            |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit() || c == '.' || c == ',');
+        let mut found = Vec::new();
+        let mut start = 0;
+        while start <= text.len() {
+            let candidate = match self.segments.first() {
+                Some(PatternSegment::Literal(lit)) => {
+                    text[start..].find(lit.as_str()).map(|o| start + o)
+                }
+                _ => text[start..]
+                    .char_indices()
+                    .map(|(o, _)| start + o)
+                    .find(|&i| !continues_number(text[..i].chars().next_back())),
+            };
+            let Some(at) = candidate else { break };
+            match self.parse_prefix(&text[at..], &mut resolve_type) {
+                Ok((values, rest)) => {
+                    let end = text.len() - rest.len();
+                    let ends_mid_number =
+                        matches!(self.segments.last(), Some(PatternSegment::Placeholder(_)))
+                            && rest.chars().next().is_some_and(|c| c.is_ascii_digit());
+                    if end > at && !ends_mid_number {
+                        found.push((at..end, values));
+                        start = end;
+                        continue;
+                    }
+                    start = at + text[at..].chars().next().map_or(1, char::len_utf8);
+                }
+                _ => start = at + text[at..].chars().next().map_or(1, char::len_utf8),
+            }
+        }
+        found
+    }
+
+    /// Parse the pattern from the start of `rendered`, returning the unconsumed remainder.
+    fn parse_prefix<'a, F>(
+        &self,
+        rendered: &'a str,
+        mut resolve_type: F,
+    ) -> Result<(IndexMap<String, CanonicalValue>, &'a str), Diagnostic>
     where
         F: FnMut(Option<&str>) -> Result<ValueType, Diagnostic>,
     {
@@ -284,17 +352,7 @@ impl FormatPattern {
             }
         }
 
-        if !cursor.is_empty() {
-            return Err(Diagnostic::error(
-                DiagnosticCode::CW3003,
-                format!(
-                    "Trailing unparsed text `{cursor}` when matching `{rendered}` against `{}`",
-                    self.raw
-                ),
-            ));
-        }
-
-        Ok(results)
+        Ok((results, cursor))
     }
 }
 
@@ -1005,6 +1063,38 @@ fn take_numeric_prefix(s: &str) -> Result<(&str, &str), Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fragments_match_inside_lines_but_never_inside_numbers() {
+        let count = |_: Option<&str>| Ok(ValueType::Count);
+        let p = FormatPattern::parse("passed {p}/{t} with zero skips").unwrap();
+        let line = "- The reviewed denominator passed 185/185 with zero skips on";
+        let found = p.find_fragments(line, count);
+        assert_eq!(found.len(), 1);
+        assert_eq!(&line[found[0].0.clone()], "passed 185/185 with zero skips");
+        assert_eq!(found[0].1["p"].as_f64(), Some(185.0));
+
+        // Leading placeholder: `{n} tests` must not claim the `62` of `362`.
+        let p = FormatPattern::parse("{n} tests").unwrap();
+        let found = p.find_fragments("All 362 tests and 4 tests", count);
+        let got: Vec<f64> = found
+            .iter()
+            .map(|(_, v)| v["n"].as_f64().unwrap())
+            .collect();
+        assert_eq!(got, vec![362.0, 4.0]);
+
+        // Trailing placeholder: `took {n}` must not stop inside `1234`.
+        let p = FormatPattern::parse("took {n}").unwrap();
+        let found = p.find_fragments("it took 1234 ms", count);
+        assert_eq!(found[0].1["n"].as_f64(), Some(1234.0));
+
+        assert!(
+            FormatPattern::parse("passes {p}/{t};")
+                .unwrap()
+                .find_fragments("no match here", count)
+                .is_empty()
+        );
+    }
 
     #[test]
     fn hidden_units_scale_without_rendering() {

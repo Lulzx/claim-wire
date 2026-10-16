@@ -491,3 +491,43 @@ fn unrelated_failing_assertion_keeps_deadband_hysteresis() {
         "a held-in-band value must not churn"
     );
 }
+
+#[test]
+fn block_fragments_survive_rewrapping_around_them() {
+    let ws = Workspace::new("fragment");
+    // Switch the whole-line pattern to the fragment that carries the numbers.
+    ws.edit(
+        ".claimwire/claims.yaml",
+        r#"      - "- Reviewed {matrix.total}-file matrix: typed **{matrix.typed}/{matrix.total}**.""#,
+        r#"      - "typed **{matrix.typed}/{matrix.total}**""#,
+    );
+    let codes = ws.codes();
+    single(
+        &codes,
+        DiagnosticCode::CW4002,
+        "Pattern #0 of block lens `status.snapshot` changed",
+    );
+    run_adopt(ws.path(), Some(&["docs/status.md".to_string()])).unwrap();
+    ws.assert_clean();
+
+    // Reflowing and rewording the prose around the fragment is free ...
+    ws.edit(
+        "docs/status.md",
+        "- Reviewed 52-file matrix: typed **50/52**.",
+        "- The reviewed matrix (52 files) reports\n  typed **50/52** today.",
+    );
+    ws.assert_clean();
+    // ... and the fragment still syncs in place.
+    fs::write(
+        ws.path().join("counts.txt"),
+        "@cw:record total=53 typed=51\n",
+    )
+    .unwrap();
+    ws.capture("counts");
+    let sync = run_sync(ws.path(), false, false, false).unwrap();
+    assert!(sync.diagnostics.is_empty(), "{:?}", sync.diagnostics);
+    assert!(
+        ws.read("docs/status.md")
+            .contains("  typed **51/53** today.")
+    );
+}
