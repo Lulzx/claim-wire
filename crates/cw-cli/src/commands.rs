@@ -48,30 +48,34 @@ pub fn cmd_init(workspace_root: &Path, args: &[String], styler: &Styler) -> Resu
         || fs::create_dir_all(&runs_dir),
     )?;
 
-    let starter_evidence = r#"schema: claimwire-evidence/v1
+    // Starter files declare nothing, so a fresh `cw init` passes `cw check`; the commented
+    // example is language-neutral (any command that prints `@cw:record` lines is a producer).
+    let starter_evidence = r#"schema: claimwire/v1
 
-producers:
-  app.benchmarks:
-    command: ["cargo", "test", "--release", "--", "--nocapture"]
-    families: [bench]
-    inputs:
-      files: ["src/**/*.rs", "crates/**/*.rs", "Cargo.lock"]
-      env: ["RUSTFLAGS"]
-    on_stale: error
-    epochs:
-      current: initial-run
+# A producer is any command that prints `@cw:record` lines. `cw capture --producer <id>`
+# runs it, fingerprints its `inputs`, writes runs/<id>/<run>.json, and points `current` at it.
+#
+# producers:
+#   tests.inventory:
+#     command: ["python3", "tools/count_tests.py"]
+#     families: []            # scalar claims only (claims.yaml `kind: source`)
+#     inputs:
+#       files: ["tests/**"]
+#     epochs:
+#       current: pending      # rewritten by `cw capture`
+producers: {}
 "#;
 
     let starter_claims = r#"schema: claimwire/v1
 
+# claims:
+#   inventory.test_count: { kind: source, producer: tests.inventory, metric: test_count, type: Count }
+#
+# Bind it in Markdown with an inline span, a `<!-- cw:block id -->` line pattern, or a
+# `<!-- cw:table id -->` lens:   <!-- cw:inventory.test_count -->362<!-- /cw --> tests
 constants: {}
 
-families:
-  bench:
-    producer: app.benchmarks
-    dimensions: [workload]
-    metrics:
-      wall_time: { type: Duration, format: "{:.2f s}", deadband: 2.5% }
+families: {}
 
 claims: {}
 
@@ -82,6 +86,7 @@ blocks: {}
 tables: {}
 "#;
 
+    let mut gitignore_updated = false;
     styler.animate_stage(2, total_steps, "Writing starter claims.yaml & evidence.yaml...", || -> Result<()> {
         fs::write(&evidence_path, starter_evidence)?;
         fs::write(&claims_path, starter_claims)?;
@@ -96,6 +101,7 @@ tables: {}
                 "\n# Claim Wire local cache and transactional staging\n**/.claimwire/.cache/\n**/.claimwire/.staging/\n",
             );
             fs::write(&gitignore_path, updated)?;
+            gitignore_updated = true;
         }
         Ok(())
     })?;
@@ -129,6 +135,14 @@ tables: {}
         styler.badge_ok("CREATED"),
         styler.bold(".claimwire/runs/")
     );
+    if gitignore_updated {
+        println!(
+            "  {} {}  {}",
+            styler.green_bold("·"),
+            styler.badge_info("UPDATED"),
+            styler.bold(".gitignore (ignores .claimwire/.cache/ and .claimwire/.staging/)")
+        );
+    }
 
     if setup_git {
         styler.animate_stage(
@@ -543,7 +557,9 @@ pub fn cmd_status(workspace_root: &Path, styler: &Styler) -> Result<u8> {
         styler.cyan_bold(&num_scalars.to_string()),
         styler.bold(&num_consts.to_string())
     );
-    if failed_assertions == 0 {
+    if total_assertions == 0 {
+        println!("  ╰─ Assertions:  {}", styler.dim("none declared"));
+    } else if failed_assertions == 0 {
         println!(
             "  ╰─ Assertions:  {}  {} ({passed_assertions}/{total_assertions} passing)",
             styler.badge_ok("✓ ALL PASSING"),
