@@ -25,5 +25,5 @@ pub use patch::{
     AdoptReport, CheckReport, ImpactLocation, ImpactReport, PatchedItem, SyncReport,
     WorkspaceContext, WriteAheadJournal, commit_transactional_writes, load_workspace_pipeline,
     recover_staging_journal, run_adopt, run_check, run_check_files, run_explain, run_impact,
-    run_sync,
+    run_sync, run_sync_options,
 };

@@ -253,18 +253,31 @@ Models are good at finding claims and bad at being invariants, so Claim Wire kee
 
 ## CLI
 
+Install the `cw` binary locally from the workspace:
+
+```bash
+cargo install --path crates/cw-cli
+```
+
+`cw` automatically walks parent directories to locate `.claimwire/` (or accepts `-C <dir>`), auto-detects terminal color support (`--color auto|always|never` and `NO_COLOR`), and provides per-subcommand `--help` and typo suggestions.
+
 | Command | Purpose |
 |---|---|
+| `cw init [--force] [--git]` | Scaffold `.claimwire/evidence.yaml`, `.claimwire/claims.yaml`, `.claimwire/runs/`, `.gitignore`, and optional Git merge driver config. |
+| `cw scan [<file…>]` | Scan Markdown files for wired/unwired GFM tables, code blocks, inline spans, and `CW1008` unescaped pipe issues. |
+| `cw adopt [<file…>]` | Reverse-parse existing Markdown through bidirectional formats to bootstrap `evidence.lock.json`, with zero byte changes. |
+| `cw status` | Workspace health dashboard: producer freshness, latest run manifests, claim/assertion counts, and per-file Markdown sync status. |
+| `cw list [producers\|families\|claims\|assertions\|locations]` | Inspect declared producers, families, evaluated scalar claims, assertions, or bound Markdown coordinates. |
 | `cw check [--format human\|json\|github\|sarif]` | Read-only verification of syntax, types, scopes, freshness, assertions, and Markdown ↔ lockfile agreement. |
-| `cw sync [--exact] [--force] [--ack-context]` | Re-evaluate claims and transactionally patch owned spans, cells, and blocks. |
+| `cw sync [--dry-run] [--diff] [--exact] [--force] [--ack-context]` | Re-evaluate claims and transactionally patch owned spans, cells, and blocks (or preview unified diffs with `--dry-run --diff`). |
 | `cw capture --producer <id> -- <cmd…>` | Run a harness, ingest `@cw:record` frames, and write an immutable, fingerprinted run manifest. |
 | `cw impact [<path…> \| --git-diff <rev>]` | Trace changed files forward to affected producers, claims, and exact `file:line` locations. |
-| `cw explain <claim \| file:line>` | Print the full provenance tree for any rendered value. |
+| `cw explain <claim \| file:line \| CWxxxx>` | Print the full provenance tree for any rendered value, or display the reference explanation for any diagnostic code (`cw explain CW1008`). |
 | `cw diff <rev1>..<rev2>` | Classify claim changes across revisions: value, definition, scope, evidence refresh, or assertion regression. |
-| `cw adopt [<file…>]` | Reverse-parse existing Markdown through bidirectional formats to bootstrap the lockfile, with zero byte changes. |
 | `cw merge-driver %O %A %B` | Git merge driver that resolves lockfile and wired-Markdown conflicts structurally. |
+| `cw completions <bash\|zsh\|fish>` | Generate shell completion scripts for `bash`, `zsh`, or `fish`. |
 
-Diagnostics are grouped by stage: `CW1xxx` syntax, `CW2xxx` types and scope, `CW3xxx` verification and freshness, `CW4xxx` conflicts and context. See [spec §9.3](spec.md#93-diagnostic-code-taxonomy).
+Diagnostics are grouped by stage: `CW1xxx` syntax, `CW2xxx` types and scope, `CW3xxx` verification and freshness, `CW4xxx` conflicts and context. See [spec §9.3](spec.md#93-diagnostic-code-taxonomy) or run `cw explain CWxxxx`.
 
 ---
 

@@ -214,6 +214,8 @@ pub struct SyncReport {
     pub patched_items: Vec<PatchedItem>,
     pub files_written: usize,
     pub lockfile_updated: bool,
+    /// Map of `rel_file -> (old_source, new_source)` for changed Markdown files.
+    pub file_diffs: IndexMap<String, (String, String)>,
 }
 
 pub fn run_sync(
@@ -222,6 +224,16 @@ pub fn run_sync(
     force: bool,
     ack_context: bool,
 ) -> Result<SyncReport> {
+    run_sync_options(workspace_root, exact, force, ack_context, false)
+}
+
+pub fn run_sync_options(
+    workspace_root: &Path,
+    exact: bool,
+    force: bool,
+    ack_context: bool,
+    dry_run: bool,
+) -> Result<SyncReport> {
     let (ctx_opt, mut diagnostics) = load_workspace_pipeline(workspace_root, exact, None)?;
     let Some(ctx) = ctx_opt else {
         return Ok(SyncReport {
@@ -229,6 +241,7 @@ pub fn run_sync(
             patched_items: Vec::new(),
             files_written: 0,
             lockfile_updated: false,
+            file_diffs: IndexMap::new(),
         });
     };
 
@@ -252,6 +265,7 @@ pub fn run_sync(
             patched_items: Vec::new(),
             files_written: 0,
             lockfile_updated: false,
+            file_diffs: IndexMap::new(),
         });
     }
 
@@ -281,10 +295,12 @@ pub fn run_sync(
     }
 
     let mut writes: IndexMap<String, String> = IndexMap::new();
+    let mut file_diffs: IndexMap<String, (String, String)> = IndexMap::new();
     for (file, file_patches) in patches_by_file {
         if let Some(doc) = ctx.lowering.documents.get(&file) {
             let new_source = apply_byte_patches(&doc.source, file_patches);
             if new_source != doc.source {
+                file_diffs.insert(file.clone(), (doc.source.clone(), new_source.clone()));
                 writes.insert(file, new_source);
             }
         }
@@ -308,7 +324,7 @@ pub fn run_sync(
     };
 
     // Invariant 1 (Idempotence): Running `cw sync` twice on unchanged inputs writes zero bytes!
-    if md_files_written > 0 || lockfile_changed {
+    if !dry_run && (md_files_written > 0 || lockfile_changed) {
         writes.insert(
             ".claimwire/evidence.lock.json".to_string(),
             new_lockfile.to_pretty_json()?,
@@ -321,6 +337,7 @@ pub fn run_sync(
         patched_items,
         files_written: md_files_written,
         lockfile_updated: md_files_written > 0 || lockfile_changed,
+        file_diffs,
     })
 }
 
